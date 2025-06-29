@@ -62,7 +62,7 @@ app.use('/admin/fields', fieldRoutes);
 
 // Middleware lain yang tidak mengganggu multer
 app.use(cors({
-  origin: process.env.CLIENT_URL,
+  origin: '*', // <--- izinkan semua origin (untuk pengujian)
   credentials: true
 }));
 app.use(cookieParser()); // <-- PASTIKAN INI SEBELUM ROUTE YANG BUTUH TOKEN
