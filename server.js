@@ -57,13 +57,18 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Middleware
+// PASANG ROUTE UPLOAD SEBELUM express.json()
+app.use('/admin/fields', fieldRoutes);
+
+// Middleware lain yang tidak mengganggu multer
 app.use(cors({
   origin: process.env.CLIENT_URL,
   credentials: true
 }));
-app.use(cookieParser());
-app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
+app.use(cookieParser()); // <-- PASTIKAN INI SEBELUM ROUTE YANG BUTUH TOKEN
+
+// Body parser SETELAH route upload
+app.use(express.json({ limit: '10kb' }));
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) }}));
 
 // Session configuration
@@ -87,7 +92,7 @@ app.use(passport.session());
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
-app.use('/fields', fieldRoutes); // Add this line
+app.use('/fields', fieldRoutes);
 
 // 404 handler
 app.use((req, res, next) => {

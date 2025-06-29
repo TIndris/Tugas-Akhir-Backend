@@ -1,23 +1,22 @@
 import Field from '../models/Field.js';
-import logger from '../utils/logger.js';
 
-// Create new field
 export const createField = async (req, res) => {
   try {
     const { nama, jenis_lapangan, jam_buka, jam_tutup, harga } = req.body;
+    const gambar = req.file ? req.file.path : undefined;
+
+    console.log('BODY:', req.body);
+    console.log('FILE:', req.file);
+    console.log('USER:', req.user);
 
     const field = await Field.create({
-      nama,            // Add this field
+      nama,
       jenis_lapangan,
       jam_buka,
       jam_tutup,
       harga,
+      gambar,
       createdBy: req.user._id
-    });
-
-    logger.info(`Field created: ${field._id}`, {
-      role: req.user.role,
-      action: 'CREATE_FIELD'
     });
 
     res.status(201).json({
@@ -25,12 +24,10 @@ export const createField = async (req, res) => {
       data: { field }
     });
   } catch (error) {
-    logger.error(`Field creation error: ${error.message}`, {
-      action: 'CREATE_FIELD_ERROR'
-    });
-    res.status(400).json({
+    console.error('CREATE_FIELD_ERROR:', error, error?.stack); // WAJIB tampilkan error detail
+    return res.status(400).json({
       status: 'error',
-      message: error.message
+      message: error.message || JSON.stringify(error) || error
     });
   }
 };

@@ -6,7 +6,7 @@ export const authenticateToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(' ')[1];
-    const cookieToken = req.cookies.jwt;
+    const cookieToken = req.cookies ? req.cookies.jwt : null;
     
     if (!token && !cookieToken) {
       return res.status(401).json({
@@ -39,6 +39,7 @@ export const authenticateToken = async (req, res, next) => {
     req.token = actualToken;
     next();
   } catch (error) {
+    console.error('JWT error:', error);
     return res.status(401).json({
       status: 'error',
       message: 'Invalid token'

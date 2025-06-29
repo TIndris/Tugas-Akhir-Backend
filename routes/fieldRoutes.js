@@ -7,6 +7,7 @@ import {
   deleteField 
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
+import upload from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -14,9 +15,11 @@ const router = express.Router();
 router.get('/', getAllFields);
 router.get('/:id', getField);
 
-// Protected routes - Only admin can manage fields
+// Middleware ini akan membatasi route di bawahnya hanya untuk admin
 router.use(authenticateToken, restrictTo('admin'));
-router.post('/', createField);
+
+// Admin-only routes
+router.post('/', upload.single('gambar'), createField);
 router.patch('/:id', updateField);
 router.delete('/:id', deleteField);
 

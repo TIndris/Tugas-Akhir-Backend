@@ -32,6 +32,9 @@ const fieldSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
+  },
+  gambar: {
+    type: String // URL gambar dari Cloudinary
   }
 }, {
   timestamps: true
