@@ -5,10 +5,6 @@ export const createField = async (req, res) => {
     const { nama, jenis_lapangan, jam_buka, jam_tutup, harga } = req.body;
     const gambar = req.file ? req.file.path : undefined;
 
-    console.log('BODY:', req.body);
-    console.log('FILE:', req.file);
-    console.log('USER:', req.user);
-
     const field = await Field.create({
       nama,
       jenis_lapangan,
@@ -24,7 +20,6 @@ export const createField = async (req, res) => {
       data: { field }
     });
   } catch (error) {
-    console.error('CREATE_FIELD_ERROR:', error, error?.stack); // WAJIB tampilkan error detail
     return res.status(400).json({
       status: 'error',
       message: error.message || JSON.stringify(error) || error
@@ -36,7 +31,6 @@ export const createField = async (req, res) => {
 export const getAllFields = async (req, res) => {
   try {
     const fields = await Field.find();
-    
     res.status(200).json({
       status: 'success',
       results: fields.length,
@@ -54,14 +48,12 @@ export const getAllFields = async (req, res) => {
 export const getField = async (req, res) => {
   try {
     const field = await Field.findById(req.params.id);
-    
     if (!field) {
       return res.status(404).json({
         status: 'error',
         message: 'Lapangan tidak ditemukan'
       });
     }
-
     res.status(200).json({
       status: 'success',
       data: { field }
@@ -85,19 +77,16 @@ export const updateField = async (req, res) => {
         runValidators: true
       }
     );
-
     if (!field) {
       return res.status(404).json({
         status: 'error',
         message: 'Lapangan tidak ditemukan'
       });
     }
-
     logger.info(`Field updated: ${field._id}`, {
       role: req.user.role,
       action: 'UPDATE_FIELD'
     });
-
     res.status(200).json({
       status: 'success',
       data: { field }
@@ -117,19 +106,16 @@ export const updateField = async (req, res) => {
 export const deleteField = async (req, res) => {
   try {
     const field = await Field.findByIdAndDelete(req.params.id);
-
     if (!field) {
       return res.status(404).json({
         status: 'error',
         message: 'Lapangan tidak ditemukan'
       });
     }
-
     logger.info(`Field deleted: ${field._id}`, {
       role: req.user.role,
       action: 'DELETE_FIELD'
     });
-
     res.status(204).json({
       status: 'success',
       data: null
