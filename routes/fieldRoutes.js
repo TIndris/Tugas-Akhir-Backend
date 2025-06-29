@@ -15,7 +15,7 @@ const router = express.Router();
 router.get('/', getAllFields);
 router.get('/:id', getField);
 
-// Middleware ini akan membatasi route di bawahnya hanya untuk admin
+// Middleware ini membatasi route di bawahnya hanya untuk admin
 router.use(authenticateToken, restrictTo('admin'));
 
 // Admin-only routes
