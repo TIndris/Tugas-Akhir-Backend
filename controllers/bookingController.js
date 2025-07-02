@@ -1,19 +1,49 @@
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
+import { client } from '../config/redis.js';
 import logger from '../utils/logger.js';
 
-// Membuat booking baru (untuk customer)
+// Create booking dengan cache invalidation
 export const createBooking = async (req, res) => {
   try {
     const { lapangan_id, tanggal_booking, jam_booking, durasi } = req.body;
 
-    // Cek ketersediaan lapangan
-    const field = await Field.findById(lapangan_id);
+    // Cache key untuk availability
+    const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;
+
+    // Check field cache first
+    let field = null;
+    const fieldCacheKey = `field:${lapangan_id}`;
+    
+    try {
+      if (client.isOpen) {
+        const cachedField = await client.get(fieldCacheKey);
+        if (cachedField) {
+          field = JSON.parse(cachedField);
+        }
+      }
+    } catch (redisError) {
+      logger.warn('Redis field cache read error:', redisError);
+    }
+
+    // If not in cache, get from database
     if (!field) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Lapangan tidak ditemukan'
-      });
+      field = await Field.findById(lapangan_id).lean();
+      if (!field) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Lapangan tidak ditemukan'
+        });
+      }
+      
+      // Cache field for 10 minutes
+      try {
+        if (client.isOpen) {
+          await client.setEx(fieldCacheKey, 600, JSON.stringify(field));
+        }
+      } catch (redisError) {
+        logger.warn('Redis field cache save error:', redisError);
+      }
     }
 
     // Validasi jam operasional
@@ -35,7 +65,7 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // Check if slot is available
+    // Check availability
     const isAvailable = await Booking.checkAvailability(
       lapangan_id, 
       tanggal_booking, 
@@ -49,7 +79,7 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // Hitung total harga
+    // Calculate price
     const totalHarga = field.harga * durasi;
 
     const booking = await Booking.create({
@@ -61,6 +91,17 @@ export const createBooking = async (req, res) => {
       durasi,
       harga: totalHarga
     });
+
+    // Clear availability cache after booking
+    try {
+      if (client.isOpen) {
+        await client.del(availabilityCacheKey);
+        await client.del(`bookings:${req.user._id}`);
+        logger.info('Availability cache cleared after booking');
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
 
     logger.info(`Booking created: ${booking._id}`, {
       user: req.user._id,
@@ -163,33 +204,32 @@ export const getBooking = async (req, res) => {
   }
 };
 
-// Mendapatkan booking milik customer tertentu
-export const getMyBookings = async (req, res) => {
-  try {
-    const bookings = await Booking.find({ pelanggan: req.user._id })
-      .populate('lapangan', 'jenis_lapangan')
-      .populate('kasir', 'name');
-
-    res.status(200).json({
-      status: 'success',
-      results: bookings.length,
-      data: { bookings }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-};
-
-// Add new function to get available slots
+// Get available slots dengan cache
 export const getAvailableSlots = async (req, res) => {
   try {
     const { fieldId, date } = req.query;
+    const cacheKey = `availability:${fieldId}:${date}`;
+    
+    // Check cache first
+    let cachedAvailability = null;
+    try {
+      if (client.isOpen) {
+        cachedAvailability = await client.get(cacheKey);
+      }
+    } catch (redisError) {
+      logger.warn('Redis availability cache read error:', redisError);
+    }
+
+    if (cachedAvailability) {
+      logger.info('Serving availability from cache');
+      return res.json({
+        status: 'success',
+        data: JSON.parse(cachedAvailability)
+      });
+    }
     
     // Validate field exists
-    const field = await Field.findById(fieldId);
+    const field = await Field.findById(fieldId).lean();
     if (!field) {
       return res.status(404).json({
         status: 'error',
@@ -200,7 +240,7 @@ export const getAvailableSlots = async (req, res) => {
     // Get all booked slots for the date
     const bookedSlots = await Booking.getBookedSlots(fieldId, date);
     
-    // Generate all possible time slots (07:00 - 24:00)
+    // Generate all possible time slots
     const allSlots = generateTimeSlots();
     
     // Mark slots as available or booked
@@ -216,18 +256,84 @@ export const getAvailableSlots = async (req, res) => {
       };
     });
 
+    const responseData = {
+      fieldName: field.nama,
+      fieldType: field.jenis_lapangan,
+      date: date,
+      slots: availabilityMap
+    };
+
+    // Cache for 2 minutes (short cache for real-time availability)
+    try {
+      if (client.isOpen) {
+        await client.setEx(cacheKey, 120, JSON.stringify(responseData));
+        logger.info('Availability cached successfully');
+      }
+    } catch (redisError) {
+      logger.warn('Redis availability cache save error:', redisError);
+    }
+
     res.status(200).json({
       status: 'success',
-      data: {
-        fieldName: field.nama,
-        fieldType: field.jenis_lapangan,
-        date: date,
-        slots: availabilityMap
-      }
+      data: responseData
     });
 
   } catch (error) {
     logger.error(`Error getting available slots: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+};
+
+// Get user bookings dengan cache
+export const getMyBookings = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const cacheKey = `bookings:${userId}`;
+    
+    // Check cache first
+    let cachedBookings = null;
+    try {
+      if (client.isOpen) {
+        cachedBookings = await client.get(cacheKey);
+      }
+    } catch (redisError) {
+      logger.warn('Redis bookings cache read error:', redisError);
+    }
+
+    if (cachedBookings) {
+      logger.info('Serving user bookings from cache');
+      const bookings = JSON.parse(cachedBookings);
+      return res.json({
+        status: 'success',
+        results: bookings.length,
+        data: { bookings }
+      });
+    }
+
+    const bookings = await Booking.find({ pelanggan: userId })
+      .populate('lapangan', 'jenis_lapangan nama')
+      .populate('kasir', 'name')
+      .lean();
+
+    // Cache for 3 minutes
+    try {
+      if (client.isOpen) {
+        await client.setEx(cacheKey, 180, JSON.stringify(bookings));
+        logger.info('User bookings cached successfully');
+      }
+    } catch (redisError) {
+      logger.warn('Redis bookings cache save error:', redisError);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      results: bookings.length,
+      data: { bookings }
+    });
+  } catch (error) {
     res.status(500).json({
       status: 'error',
       message: error.message

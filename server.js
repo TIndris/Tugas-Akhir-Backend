@@ -9,6 +9,7 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import connectDB from './config/db.js';
+import { connectRedis } from './config/redis.js'; 
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import bookingRoutes from './routes/bookingRoutes.js';
@@ -22,11 +23,14 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB and initialize admin
+// Connect to MongoDB, Redis and initialize admin
 const initialize = async () => {
   try {
     // Connect to MongoDB
     await connectDB();
+    
+    // Connect to Redis
+    await connectRedis(); // Tambahkan ini
     
     // Initialize admin account
     const adminInitialized = await initAdmin();

@@ -1,4 +1,6 @@
 import Field from '../models/Field.js';
+import { client } from '../config/redis.js';
+import logger from '../utils/logger.js';
 
 export const createField = async (req, res) => {
   try {
@@ -15,6 +17,17 @@ export const createField = async (req, res) => {
       createdBy: req.user._id
     });
 
+    // Clear cache after creating new field
+    try {
+      if (client.isOpen) {
+        await client.del('fields:all');
+        await client.del('fields:available');
+        logger.info('Fields cache cleared after create');
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
     res.status(201).json({
       status: 'success',
       data: { field }
@@ -27,16 +40,57 @@ export const createField = async (req, res) => {
   }
 };
 
-// Get all fields
+// Get all fields dengan Redis caching
 export const getAllFields = async (req, res) => {
   try {
-    const fields = await Field.find();
-    res.status(200).json({
+    const { jenis_lapangan, status } = req.query;
+    const cacheKey = `fields:all:${jenis_lapangan || 'all'}:${status || 'all'}`;
+    
+    // Check cache first
+    let cachedFields = null;
+    try {
+      if (client.isOpen) {
+        cachedFields = await client.get(cacheKey);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache read error:', redisError);
+    }
+
+    if (cachedFields) {
+      logger.info('Serving fields from cache');
+      const fields = JSON.parse(cachedFields);
+      return res.json({
+        status: 'success',
+        results: fields.length,
+        data: { fields }
+      });
+    }
+
+    // Build query filter
+    const filter = {};
+    if (jenis_lapangan) filter.jenis_lapangan = jenis_lapangan;
+    if (status) filter.status = status;
+
+    // Get from database
+    const fields = await Field.find(filter).lean();
+    
+    // Cache for 5 minutes
+    try {
+      if (client.isOpen) {
+        await client.setEx(cacheKey, 300, JSON.stringify(fields));
+        logger.info('Fields cached successfully');
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache save error:', redisError);
+    }
+    
+    res.json({
       status: 'success',
       results: fields.length,
       data: { fields }
     });
   } catch (error) {
+    logger.error('Error in getAllFields:', error);
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -44,16 +98,46 @@ export const getAllFields = async (req, res) => {
   }
 };
 
-// Get single field
+// Get single field dengan cache
 export const getField = async (req, res) => {
   try {
-    const field = await Field.findById(req.params.id);
+    const fieldId = req.params.id;
+    const cacheKey = `field:${fieldId}`;
+    
+    // Check cache first
+    let cachedField = null;
+    try {
+      if (client.isOpen) {
+        cachedField = await client.get(cacheKey);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache read error:', redisError);
+    }
+
+    if (cachedField) {
+      return res.json({
+        status: 'success',
+        data: { field: JSON.parse(cachedField) }
+      });
+    }
+
+    const field = await Field.findById(fieldId).lean();
     if (!field) {
       return res.status(404).json({
         status: 'error',
         message: 'Lapangan tidak ditemukan'
       });
     }
+
+    // Cache single field for 10 minutes
+    try {
+      if (client.isOpen) {
+        await client.setEx(cacheKey, 600, JSON.stringify(field));
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache save error:', redisError);
+    }
+    
     res.status(200).json({
       status: 'success',
       data: { field }
@@ -83,6 +167,19 @@ export const updateField = async (req, res) => {
         message: 'Lapangan tidak ditemukan'
       });
     }
+
+    // Clear cache after update
+    try {
+      if (client.isOpen) {
+        await client.del('fields:all');
+        await client.del(`field:${req.params.id}`);
+        await client.del('fields:available');
+        logger.info('Fields cache cleared after update');
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
     logger.info(`Field updated: ${field._id}`, {
       role: req.user.role,
       action: 'UPDATE_FIELD'
@@ -112,6 +209,19 @@ export const deleteField = async (req, res) => {
         message: 'Lapangan tidak ditemukan'
       });
     }
+
+    // Clear cache after delete
+    try {
+      if (client.isOpen) {
+        await client.del('fields:all');
+        await client.del(`field:${req.params.id}`);
+        await client.del('fields:available');
+        logger.info('Fields cache cleared after delete');
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
     logger.info(`Field deleted: ${field._id}`, {
       role: req.user.role,
       action: 'DELETE_FIELD'

@@ -56,4 +56,8 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
+// Tambahkan index untuk performance
+userSchema.index({ email: 1 }); // unique sudah auto-index, tapi eksplisit lebih baik
+userSchema.index({ role: 1 });
+
 export default mongoose.model('User', userSchema);

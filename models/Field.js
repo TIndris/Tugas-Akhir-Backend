@@ -40,4 +40,9 @@ const fieldSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Tambahkan index untuk performance
+fieldSchema.index({ nama: 1 });
+fieldSchema.index({ jenis_lapangan: 1 });
+fieldSchema.index({ status: 1 });
+
 export default mongoose.model('Field', fieldSchema);

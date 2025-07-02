@@ -89,6 +89,11 @@ bookingSchema.pre('save', async function(next) {
   next();
 });
 
+// Tambahkan index untuk performance
+bookingSchema.index({ lapangan: 1, tanggal_booking: 1 });
+bookingSchema.index({ pelanggan: 1 });
+bookingSchema.index({ status_pemesanan: 1 });
+
 // Add static method to check availability
 bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   const existingBooking = await this.findOne({
