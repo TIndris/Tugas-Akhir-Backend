@@ -156,12 +156,13 @@ export const confirmBooking = async (req, res) => {
   }
 };
 
-// Mendapatkan semua booking (untuk admin/kasir)
+// Mendapatkan semua booking (untuk admin/kasir) - FIXED untuk WIB format
 export const getAllBookings = async (req, res) => {
   try {
+    // HAPUS .lean() agar virtual fields WIB aktif
     const bookings = await Booking.find()
       .populate('pelanggan', 'name email')
-      .populate('lapangan', 'jenis_lapangan')
+      .populate('lapangan', 'jenis_lapangan nama')
       .populate('kasir', 'name');
 
     res.status(200).json({
@@ -177,12 +178,13 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
-// Mendapatkan booking by ID
+// Mendapatkan booking by ID - FIXED untuk WIB format
 export const getBooking = async (req, res) => {
   try {
+    // HAPUS .lean() agar virtual fields WIB aktif
     const booking = await Booking.findById(req.params.id)
       .populate('pelanggan', 'name email')
-      .populate('lapangan', 'jenis_lapangan')
+      .populate('lapangan', 'jenis_lapangan nama')
       .populate('kasir', 'name');
 
     if (!booking) {
@@ -287,7 +289,7 @@ export const getAvailableSlots = async (req, res) => {
   }
 };
 
-// Get user bookings dengan cache
+// Get user bookings dengan cache - FIXED untuk WIB format
 export const getMyBookings = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -296,7 +298,7 @@ export const getMyBookings = async (req, res) => {
     // Check cache first
     let cachedBookings = null;
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         cachedBookings = await client.get(cacheKey);
       }
     } catch (redisError) {
@@ -313,14 +315,14 @@ export const getMyBookings = async (req, res) => {
       });
     }
 
+    // HAPUS .lean() agar virtual fields WIB aktif
     const bookings = await Booking.find({ pelanggan: userId })
       .populate('lapangan', 'jenis_lapangan nama')
-      .populate('kasir', 'name')
-      .lean();
+      .populate('kasir', 'name');
 
     // Cache for 3 minutes
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         await client.setEx(cacheKey, 180, JSON.stringify(bookings));
         logger.info('User bookings cached successfully');
       }
