@@ -19,7 +19,7 @@ export const createField = async (req, res) => {
 
     // Clear cache after creating new field
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         await client.del('fields:all');
         await client.del('fields:available');
         logger.info('Fields cache cleared after create');
@@ -40,7 +40,7 @@ export const createField = async (req, res) => {
   }
 };
 
-// Get all fields dengan Redis caching
+// Get all fields dengan Redis caching - FIXED untuk konsistensi
 export const getAllFields = async (req, res) => {
   try {
     const { jenis_lapangan, status } = req.query;
@@ -49,7 +49,7 @@ export const getAllFields = async (req, res) => {
     // Check cache first
     let cachedFields = null;
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         cachedFields = await client.get(cacheKey);
       }
     } catch (redisError) {
@@ -71,12 +71,12 @@ export const getAllFields = async (req, res) => {
     if (jenis_lapangan) filter.jenis_lapangan = jenis_lapangan;
     if (status) filter.status = status;
 
-    // Get from database
-    const fields = await Field.find(filter).lean();
+    // HAPUS .lean() agar virtual fields aktif
+    const fields = await Field.find(filter);
     
     // Cache for 5 minutes
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         await client.setEx(cacheKey, 300, JSON.stringify(fields));
         logger.info('Fields cached successfully');
       }
@@ -98,7 +98,7 @@ export const getAllFields = async (req, res) => {
   }
 };
 
-// Get single field dengan cache
+// Get single field dengan cache - FIXED untuk konsistensi
 export const getField = async (req, res) => {
   try {
     const fieldId = req.params.id;
@@ -107,7 +107,7 @@ export const getField = async (req, res) => {
     // Check cache first
     let cachedField = null;
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         cachedField = await client.get(cacheKey);
       }
     } catch (redisError) {
@@ -121,7 +121,8 @@ export const getField = async (req, res) => {
       });
     }
 
-    const field = await Field.findById(fieldId).lean();
+    // HAPUS .lean() agar virtual fields aktif
+    const field = await Field.findById(fieldId);
     if (!field) {
       return res.status(404).json({
         status: 'error',
@@ -131,7 +132,7 @@ export const getField = async (req, res) => {
 
     // Cache single field for 10 minutes
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         await client.setEx(cacheKey, 600, JSON.stringify(field));
       }
     } catch (redisError) {
@@ -170,8 +171,8 @@ export const updateField = async (req, res) => {
 
     // Clear cache after update
     try {
-      if (client.isOpen) {
-        await client.del('fields:all');
+      if (client && client.isOpen) {
+        await client.del('fields:all:all:all');
         await client.del(`field:${req.params.id}`);
         await client.del('fields:available');
         logger.info('Fields cache cleared after update');
@@ -212,8 +213,8 @@ export const deleteField = async (req, res) => {
 
     // Clear cache after delete
     try {
-      if (client.isOpen) {
-        await client.del('fields:all');
+      if (client && client.isOpen) {
+        await client.del('fields:all:all:all');
         await client.del(`field:${req.params.id}`);
         await client.del('fields:available');
         logger.info('Fields cache cleared after delete');
