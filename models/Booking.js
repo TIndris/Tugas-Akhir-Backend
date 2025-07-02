@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import moment from 'moment-timezone';
 
 const bookingSchema = new mongoose.Schema({
   pelanggan: {
@@ -40,13 +41,27 @@ const bookingSchema = new mongoose.Schema({
   kasir: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    // Opsional karena awalnya booking belum dikonfirmasi kasir
   },
   konfirmasi_at: {
     type: Date
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// Virtual fields untuk format Indonesia
+bookingSchema.virtual('createdAtWIB').get(function() {
+  return moment(this.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
+});
+
+bookingSchema.virtual('updatedAtWIB').get(function() {
+  return moment(this.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
+});
+
+bookingSchema.virtual('tanggal_bookingWIB').get(function() {
+  return moment(this.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY');
 });
 
 // Middleware untuk mengecek ketersediaan lapangan
@@ -89,7 +104,7 @@ bookingSchema.pre('save', async function(next) {
   next();
 });
 
-// Tambahkan index untuk performance
+// Index untuk performance
 bookingSchema.index({ lapangan: 1, tanggal_booking: 1 });
 bookingSchema.index({ pelanggan: 1 });
 bookingSchema.index({ status_pemesanan: 1 });

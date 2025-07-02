@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import moment from 'moment-timezone';
 
 const fieldSchema = new mongoose.Schema({
   nama: {
@@ -34,14 +35,24 @@ const fieldSchema = new mongoose.Schema({
     required: true
   },
   gambar: {
-    type: String // URL gambar dari Cloudinary
+    type: String
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true }, // Include virtuals when converting to JSON
+  toObject: { virtuals: true }
 });
 
-// Tambahkan index untuk performance
-fieldSchema.index({ nama: 1 });
+// Virtual fields untuk format Indonesia
+fieldSchema.virtual('createdAtWIB').get(function() {
+  return moment(this.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
+});
+
+fieldSchema.virtual('updatedAtWIB').get(function() {
+  return moment(this.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
+});
+
+// Index untuk performance
 fieldSchema.index({ jenis_lapangan: 1 });
 fieldSchema.index({ status: 1 });
 

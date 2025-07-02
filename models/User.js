@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import moment from 'moment-timezone';
 
 const userSchema = new mongoose.Schema({
   googleId: {
@@ -34,7 +35,20 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// Virtual fields untuk format Indonesia
+userSchema.virtual('createdAtWIB').get(function() {
+  return moment(this.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
+});
+
+userSchema.virtual('updatedAtWIB').get(function() {
+  return moment(this.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
+});
 
 // Prevent Google OAuth users from being admin/cashier
 userSchema.pre('save', function(next) {
@@ -56,8 +70,7 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Tambahkan index untuk performance
-userSchema.index({ email: 1 }); // unique sudah auto-index, tapi eksplisit lebih baik
+// Index untuk performance
 userSchema.index({ role: 1 });
 
 export default mongoose.model('User', userSchema);
