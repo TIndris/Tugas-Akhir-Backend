@@ -5,24 +5,55 @@ import mongoose from 'mongoose';
 
 export const createField = async (req, res) => {
   try {
+    console.log('=== CREATE FIELD DEBUG ===');
+    console.log('Content-Type:', req.get('content-type'));
+    console.log('req.body:', req.body);
+    console.log('req.file:', req.file);
+    console.log('Body keys:', Object.keys(req.body || {}));
+    
     const { nama, jenis_lapangan, jam_buka, jam_tutup, harga } = req.body;
     
+    // Validate required fields from form-data
+    if (!nama || !jenis_lapangan || !jam_buka || !jam_tutup || !harga) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Semua field harus diisi',
+        error: {
+          code: 'MISSING_REQUIRED_FIELDS',
+          missingFields: {
+            nama: !nama,
+            jenis_lapangan: !jenis_lapangan,
+            jam_buka: !jam_buka,
+            jam_tutup: !jam_tutup,
+            harga: !harga
+          }
+        }
+      });
+    }
+    
     // Validate required file upload
-    if (!req.file) {
+    if (!req.file || !req.file.path) {
       return res.status(400).json({
         status: 'error',
         message: 'Gambar lapangan harus diupload',
         error: {
           code: 'FILE_REQUIRED',
-          field: 'gambar'
+          field: 'gambar',
+          debug: {
+            hasReqFile: !!req.file,
+            filePath: req.file?.path,
+            fileKeys: req.file ? Object.keys(req.file) : null
+          }
         }
       });
     }
 
     const gambar = req.file.path; // Cloudinary URL
+    
+    console.log('File uploaded to:', gambar);
 
     // Check if field name already exists
-    const existingField = await Field.findOne({ nama });
+    const existingField = await Field.findOne({ nama: nama.trim() });
     if (existingField) {
       return res.status(409).json({
         status: 'error',
@@ -35,15 +66,18 @@ export const createField = async (req, res) => {
       });
     }
 
+    // Create field dengan data yang sudah divalidasi
     const field = await Field.create({
-      nama,
-      jenis_lapangan,
-      jam_buka,
-      jam_tutup,
-      harga,
+      nama: nama.trim(),
+      jenis_lapangan: jenis_lapangan.trim(),
+      jam_buka: jam_buka.trim(),
+      jam_tutup: jam_tutup.trim(),
+      harga: parseInt(harga),
       gambar,
       createdBy: req.user._id
     });
+
+    console.log('Field created successfully:', field._id);
 
     // Clear cache
     try {
@@ -67,6 +101,9 @@ export const createField = async (req, res) => {
       data: { field }
     });
   } catch (error) {
+    console.error('=== CREATE FIELD ERROR ===');
+    console.error('Error:', error);
+    
     logger.error(`Field creation error: ${error.message}`, {
       action: 'CREATE_FIELD_ERROR'
     });

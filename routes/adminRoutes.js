@@ -9,6 +9,7 @@ import {
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
 import { adminRouteLimit } from '../middleware/adminAuth.js';
+import upload from '../middleware/upload.js'; // ← ADD UPLOAD IMPORT
 
 const router = express.Router();
 
@@ -20,11 +21,11 @@ router.use(authenticateToken, restrictTo('admin'));
 router.post('/cashiers', createCashier);
 router.get('/cashiers', getCashiers);
 
-// Field routes
-router.post('/fields', createField);
+// Field routes dengan upload middleware
+router.post('/fields', upload.single('gambar'), createField); // ← ADD UPLOAD MIDDLEWARE
 router.get('/fields', getAllFields);
 router.get('/fields/:id', getField);
-router.patch('/fields/:id', updateField);
+router.patch('/fields/:id', upload.single('gambar'), updateField); // ← ADD UPLOAD MIDDLEWARE
 router.delete('/fields/:id', deleteField);
 
 export default router;
