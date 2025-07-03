@@ -435,3 +435,144 @@ export const deleteField = async (req, res) => {
     });
   }
 };
+
+// TAMBAH FUNCTION INI DI AKHIR FILE
+export const updateFieldJSON = async (req, res) => {
+  try {
+    console.log('=== UPDATE FIELD JSON DEBUG ===');
+    console.log('Field ID:', req.params.id);
+    console.log('User:', req.user?.name, req.user?.role);
+    console.log('Request Body:', req.body);
+    console.log('Content-Type:', req.get('Content-Type'));
+    
+    const fieldId = req.params.id;
+    const updateData = { ...req.body };
+
+    // Check if body exists and has data
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Request body kosong atau tidak valid'
+      });
+    }
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(fieldId)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID lapangan tidak valid'
+      });
+    }
+
+    // Get current field
+    const currentField = await Field.findById(fieldId);
+    if (!currentField) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Lapangan tidak ditemukan'
+      });
+    }
+
+    console.log('Current field before update:', {
+      nama: currentField.nama,
+      harga: currentField.harga,
+      status: currentField.status
+    });
+
+    // Check for duplicate name (if nama is being updated)
+    if (updateData.nama && updateData.nama !== currentField.nama) {
+      const existingField = await Field.findOne({ 
+        nama: updateData.nama, 
+        _id: { $ne: fieldId } 
+      });
+      
+      if (existingField) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Nama lapangan sudah digunakan'
+        });
+      }
+    }
+
+    console.log('About to update with data:', updateData);
+
+    // Update field - PENTING: runValidators true
+    const field = await Field.findByIdAndUpdate(
+      fieldId,
+      updateData,
+      {
+        new: true, // Return updated document
+        runValidators: true // Validate the update
+      }
+    );
+
+    console.log('Field AFTER update:', {
+      nama: field.nama,
+      harga: field.harga,
+      status: field.status,
+      jenis_lapangan: field.jenis_lapangan,
+      jam_buka: field.jam_buka,
+      jam_tutup: field.jam_tutup,
+      updatedAt: field.updatedAt
+    });
+
+    // Clear cache after update
+    try {
+      if (client && client.isOpen) {
+        await client.del('fields:all:all:all');
+        await client.del(`field:${fieldId}`);
+        await client.del('fields:available');
+        logger.info('Fields cache cleared after update');
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    logger.info(`Field updated via JSON: ${field._id}`, {
+      role: req.user.role,
+      action: 'UPDATE_FIELD_JSON'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Lapangan berhasil diperbarui',
+      data: { field }
+    });
+    
+  } catch (error) {
+    console.error('=== UPDATE FIELD JSON ERROR ===');
+    console.error('Error:', error);
+    
+    logger.error(`Field JSON update error: ${error.message}`, {
+      action: 'UPDATE_FIELD_JSON_ERROR',
+      fieldId: req.params.id,
+      body: req.body
+    });
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => ({
+        field: err.path,
+        message: err.message
+      }));
+
+      return res.status(400).json({
+        status: 'error',
+        message: 'Data tidak valid',
+        error: {
+          code: 'VALIDATION_ERROR',
+          details: validationErrors
+        }
+      });
+    }
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat memperbarui lapangan',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error.message
+      }
+    });
+  }
+};

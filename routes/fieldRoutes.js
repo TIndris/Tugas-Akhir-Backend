@@ -4,6 +4,7 @@ import {
   getField, 
   createField, 
   updateField, 
+  updateFieldJSON, // ← TAMBAH IMPORT INI
   deleteField 
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
@@ -16,10 +17,18 @@ router.get('/', getAllFields);
 router.get('/:id', getField);
 
 // Admin routes dengan proper middleware order
+// 1. JSON update tanpa file (lebih reliable)
+router.patch('/:id/json', 
+  authenticateToken, 
+  restrictTo('admin'),
+  updateFieldJSON // ← TAMBAH ROUTE INI
+);
+
+// 2. Form-data update dengan file
 router.patch('/:id', 
   authenticateToken, 
   restrictTo('admin'),
-  debugMulter, // ← Add debug middleware
+  debugMulter,
   upload.single('gambar'), 
   updateField
 );
@@ -27,7 +36,7 @@ router.patch('/:id',
 router.post('/', 
   authenticateToken, 
   restrictTo('admin'),
-  debugMulter, // ← Add debug middleware
+  debugMulter,
   upload.single('gambar'),
   createField
 );
