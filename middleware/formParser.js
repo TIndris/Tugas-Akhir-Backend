@@ -5,31 +5,27 @@ const parseFormData = (req, res, next) => {
     return next();
   }
 
-  // Get boundary
-  const contentType = req.get('content-type');
-  const boundaryMatch = contentType.match(/boundary=(.+)$/);
-  if (!boundaryMatch) {
+  const boundary = req.get('content-type').split('boundary=')[1];
+  if (!boundary) {
     req.body = {};
     return next();
   }
 
-  const boundary = boundaryMatch[1];
-  let rawData = '';
-
-  // Set encoding for text parsing
-  req.setEncoding('binary');
-
+  const chunks = [];
+  
   req.on('data', chunk => {
-    rawData += chunk;
+    chunks.push(chunk);
   });
 
   req.on('end', async () => {
     try {
-      const fields = {};
-      let fileData = null;
-
+      const buffer = Buffer.concat(chunks);
+      const data = buffer.toString();
+      
       // Split by boundary
-      const parts = rawData.split(`--${boundary}`);
+      const parts = data.split(`--${boundary}`);
+      const fields = {};
+      let fileInfo = null;
 
       for (const part of parts) {
         if (!part.includes('Content-Disposition: form-data')) continue;
@@ -37,72 +33,89 @@ const parseFormData = (req, res, next) => {
         // Extract field name
         const nameMatch = part.match(/name="([^"]+)"/);
         if (!nameMatch) continue;
+        
         const fieldName = nameMatch[1];
 
         if (part.includes('filename=')) {
-          // File field
+          // Handle file
           const filenameMatch = part.match(/filename="([^"]+)"/);
           if (filenameMatch && filenameMatch[1]) {
             const filename = filenameMatch[1];
-            const contentTypeMatch = part.match(/Content-Type:\s*(.+)\r?\n/);
-            const contentType = contentTypeMatch ? contentTypeMatch[1] : 'application/octet-stream';
-
-            // Find file content
-            const fileStart = part.indexOf('\r\n\r\n');
-            if (fileStart !== -1) {
-              const fileContent = part.substring(fileStart + 4, part.lastIndexOf('\r\n'));
-              if (fileContent.length > 0) {
-                fileData = {
+            
+            // Find binary content between headers and boundary
+            const headerEnd = part.indexOf('\r\n\r\n');
+            const contentEnd = part.lastIndexOf('\r\n--');
+            
+            if (headerEnd > 0 && contentEnd > headerEnd) {
+              const binaryContent = part.slice(headerEnd + 4, contentEnd);
+              const fileBuffer = Buffer.from(binaryContent, 'binary');
+              
+              if (fileBuffer.length > 100) { // Valid file size
+                fileInfo = {
                   fieldname: fieldName,
                   originalname: filename,
-                  mimetype: contentType,
-                  buffer: Buffer.from(fileContent, 'binary')
+                  buffer: fileBuffer
                 };
               }
             }
           }
         } else {
-          // Text field
+          // Handle text field
           const valueStart = part.indexOf('\r\n\r\n');
-          if (valueStart !== -1) {
-            const value = part.substring(valueStart + 4, part.lastIndexOf('\r\n'));
-            if (value.trim()) {
-              fields[fieldName] = value.trim();
+          const valueEnd = part.lastIndexOf('\r\n');
+          
+          if (valueStart > 0 && valueEnd > valueStart) {
+            const value = part.slice(valueStart + 4, valueEnd).trim();
+            
+            // Only add non-empty values
+            if (value && value.length > 0) {
+              fields[fieldName] = value;
             }
           }
         }
       }
 
-      // Set fields
+      // CRITICAL: Set req.body dengan parsed fields
       req.body = fields;
 
-      // Upload file if present
-      if (fileData && fileData.buffer.length > 0) {
+      // Upload file jika ada
+      if (fileInfo && fileInfo.buffer.length > 0) {
         try {
-          const result = await new Promise((resolve, reject) => {
+          const uploadResult = await new Promise((resolve, reject) => {
             cloudinary.uploader.upload_stream(
-              { folder: 'lapangan', resource_type: 'image' },
-              (error, result) => error ? reject(error) : resolve(result)
-            ).end(fileData.buffer);
+              {
+                folder: 'lapangan',
+                resource_type: 'image'
+              },
+              (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+              }
+            ).end(fileInfo.buffer);
           });
 
           req.file = {
-            fieldname: fileData.fieldname,
-            originalname: fileData.originalname,
-            mimetype: fileData.mimetype,
-            path: result.secure_url,
-            size: fileData.buffer.length
+            fieldname: fileInfo.fieldname,
+            originalname: fileInfo.originalname,
+            path: uploadResult.secure_url,
+            size: fileInfo.buffer.length
           };
-        } catch (error) {
-          // File upload failed, continue without file
+        } catch (uploadError) {
+          // Continue without file if upload fails
         }
       }
 
       next();
     } catch (error) {
+      // Set empty body on error and continue
       req.body = {};
       next();
     }
+  });
+
+  req.on('error', () => {
+    req.body = {};
+    next();
   });
 };
 
