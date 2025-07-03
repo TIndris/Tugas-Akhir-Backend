@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
+import moment from 'moment-timezone';
 
 // Import configurations
 import connectDB from './config/db.js';
@@ -70,12 +71,33 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Health check
 app.get('/', (req, res) => {
+  const now = moment().tz('Asia/Jakarta');
+  
   res.json({ 
     status: 'success',
     message: 'Tugas Akhir Backend API is running!',
     version: '1.0.0',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    timestamp: {
+      iso: new Date().toISOString(),
+      wib: now.format('DD/MM/YYYY HH:mm:ss'),
+      wib_readable: now.format('dddd, DD MMMM YYYY [pukul] HH:mm:ss [WIB]'),
+      unix: now.unix()
+    },
+    server: {
+      environment: process.env.NODE_ENV || 'development',
+      uptime_seconds: Math.floor(process.uptime()),
+      uptime_readable: moment.duration(process.uptime(), 'seconds').humanize(),
+      node_version: process.version,
+      timezone: 'Asia/Jakarta (WIB)'
+    },
+    api: {
+      endpoints: [
+        '/auth - Authentication routes',
+        '/admin - Admin management routes', 
+        '/fields - Field management routes',
+        '/bookings - Booking management routes'
+      ]
+    }
   });
 });
 
