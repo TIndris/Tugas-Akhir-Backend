@@ -9,7 +9,7 @@ import {
   deleteField 
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
-import parseFormData from '../middleware/formParser.js';
+// import parseFormData from '../middleware/formParser.js';
 
 const router = express.Router();
 
@@ -20,13 +20,14 @@ router.get('/:id', getField);
 // Admin routes
 router.use(authenticateToken, restrictTo('admin'));
 
-router.post('/', parseFormData, createField);
+// Temporary: disable form-data routes untuk fix deployment
+// router.post('/', parseFormData, createField);
+// router.patch('/:id', parseFormData, updateFieldHybrid);
 
-// Multiple update endpoints
-router.patch('/:id/json', updateFieldJSON);           // JSON only
-router.patch('/:id/form', parseFormData, updateField); // Form-data only  
-router.patch('/:id', parseFormData, updateFieldHybrid); // Hybrid (both)
-
+// Only JSON routes untuk sementara
+router.post('/', createField);
+router.patch('/:id/json', updateFieldJSON);
+router.patch('/:id', updateFieldJSON); // Redirect to JSON update
 router.delete('/:id', deleteField);
 
 export default router;
