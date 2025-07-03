@@ -45,12 +45,20 @@ app.use(helmet({
 }));
 app.use(mongoSanitize());
 
-// CORS
+// CORS - Support frontend development
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://tugas-akhir-backend-ashy.vercel.app'] 
-    : '*',
-  credentials: true
+  origin: [
+    'https://tugas-akhir-backend-ashy.vercel.app', // API self
+    'http://localhost:3000',                        // React default
+    'http://localhost:5173',                        // Vite default
+    'http://127.0.0.1:3000',                        // Alternative localhost
+    // Tambah domain frontend deploy nanti
+    // 'https://tugas-akhir-frontend.vercel.app'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'
+  ]
 }));
 
 // Body parser
