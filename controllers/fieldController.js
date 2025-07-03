@@ -121,26 +121,36 @@ export const updateField = async (req, res) => {
     console.log('Field ID:', req.params.id);
     console.log('User:', req.user?.name, req.user?.role);
     console.log('Content-Type:', req.get('Content-Type'));
+    console.log('Method:', req.method);
     console.log('req.body after multer:', req.body);
     console.log('req.file after multer:', req.file);
     console.log('Body keys:', Object.keys(req.body || {}));
+    console.log('Body type:', typeof req.body);
+    console.log('Raw headers:', req.headers);
     
     const fieldId = req.params.id;
 
-    // Check if multer parsed the form-data properly
+    // More lenient data checking
     const hasData = req.body && Object.keys(req.body).length > 0;
     const hasFile = req.file;
     
+    console.log('Data check - hasData:', hasData, 'hasFile:', hasFile);
+    
+    // If no data AND no file, return error
     if (!hasData && !hasFile) {
+      console.log('❌ No data received from multer');
       return res.status(400).json({
         status: 'error',
         message: 'Tidak ada data yang diterima dari form-data',
         debug: {
           contentType: req.get('Content-Type'),
+          method: req.method,
           hasBody: !!req.body,
           bodyKeys: Object.keys(req.body || {}),
+          bodyType: typeof req.body,
           hasFile: !!req.file,
-          receivedData: req.body
+          receivedData: req.body,
+          headers: req.headers
         }
       });
     }
@@ -162,7 +172,7 @@ export const updateField = async (req, res) => {
       });
     }
 
-    console.log('Current field before update:', {
+    console.log('✅ Current field found:', {
       nama: currentField.nama,
       jenis_lapangan: currentField.jenis_lapangan,
       jam_buka: currentField.jam_buka,
@@ -174,21 +184,47 @@ export const updateField = async (req, res) => {
     // Prepare update data from form-data
     const updateData = {};
     
-    // Process each field from req.body
-    if (req.body.nama) updateData.nama = req.body.nama.trim();
-    if (req.body.jenis_lapangan) updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
-    if (req.body.jam_buka) updateData.jam_buka = req.body.jam_buka.trim();
-    if (req.body.jam_tutup) updateData.jam_tutup = req.body.jam_tutup.trim();
-    if (req.body.harga) updateData.harga = parseInt(req.body.harga);
-    if (req.body.status) updateData.status = req.body.status.trim();
+    // Process each field from req.body with more robust handling
+    if (req.body && typeof req.body === 'object') {
+      if (req.body.nama && req.body.nama.trim()) {
+        updateData.nama = req.body.nama.trim();
+      }
+      if (req.body.jenis_lapangan && req.body.jenis_lapangan.trim()) {
+        updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
+      }
+      if (req.body.jam_buka && req.body.jam_buka.trim()) {
+        updateData.jam_buka = req.body.jam_buka.trim();
+      }
+      if (req.body.jam_tutup && req.body.jam_tutup.trim()) {
+        updateData.jam_tutup = req.body.jam_tutup.trim();
+      }
+      if (req.body.harga && !isNaN(req.body.harga)) {
+        updateData.harga = parseInt(req.body.harga);
+      }
+      if (req.body.status && req.body.status.trim()) {
+        updateData.status = req.body.status.trim();
+      }
+    }
     
     // Add new image if uploaded
-    if (req.file) {
+    if (req.file && req.file.path) {
       updateData.gambar = req.file.path;
-      console.log('New image uploaded:', req.file.path);
+      console.log('✅ New image uploaded:', req.file.path);
     }
 
-    console.log('Update data to be applied:', updateData);
+    console.log('📝 Update data to be applied:', updateData);
+
+    // Check if we have any data to update
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Tidak ada data valid untuk diupdate',
+        debug: {
+          receivedBody: req.body,
+          hasFile: !!req.file
+        }
+      });
+    }
 
     // Check for duplicate name (if nama is being updated)
     if (updateData.nama && updateData.nama !== currentField.nama) {
@@ -210,6 +246,8 @@ export const updateField = async (req, res) => {
       }
     }
 
+    console.log('🔄 About to update field...');
+
     // Update field with processed data
     const field = await Field.findByIdAndUpdate(
       fieldId,
@@ -220,7 +258,7 @@ export const updateField = async (req, res) => {
       }
     );
 
-    console.log('Field AFTER update:', {
+    console.log('✅ Field AFTER update:', {
       nama: field.nama,
       jenis_lapangan: field.jenis_lapangan,
       jam_buka: field.jam_buka,
@@ -246,7 +284,8 @@ export const updateField = async (req, res) => {
     logger.info(`Field updated via form-data: ${field._id}`, {
       role: req.user.role,
       action: 'UPDATE_FIELD_FORM_DATA',
-      hasFile: !!req.file
+      hasFile: !!req.file,
+      updatedFields: Object.keys(updateData)
     });
     
     res.status(200).json({

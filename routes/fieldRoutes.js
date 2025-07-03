@@ -22,7 +22,19 @@ router.use(authenticateToken, restrictTo('admin'));
 // CREATE field (form-data dengan file REQUIRED)
 router.post('/', 
   debugMulter,
-  upload.single('gambar'), 
+  (req, res, next) => {
+    upload.single('gambar')(req, res, (err) => {
+      if (err) {
+        console.log('Multer error in POST:', err);
+        return res.status(400).json({
+          status: 'error',
+          message: 'File upload error',
+          error: err.message
+        });
+      }
+      next();
+    });
+  },
   createField
 );
 
@@ -30,10 +42,22 @@ router.post('/',
 // 1. JSON update tanpa file
 router.patch('/:id/json', updateFieldJSON);
 
-// 2. Form-data update dengan file optional (SAMA SEPERTI CREATE)
+// 2. Form-data update dengan file optional
 router.patch('/:id', 
   debugMulter,
-  upload.single('gambar'), 
+  (req, res, next) => {
+    upload.single('gambar')(req, res, (err) => {
+      if (err) {
+        console.log('Multer error in PATCH:', err);
+        return res.status(400).json({
+          status: 'error',
+          message: 'File upload error',
+          error: err.message
+        });
+      }
+      next();
+    });
+  },
   updateField
 );
 
