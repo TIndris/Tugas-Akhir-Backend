@@ -1,75 +1,131 @@
-import multer from 'multer';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import cloudinary from '../config/cloudinary.js';
 
-// Create cloudinary storage
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'lapangan',
-    allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
-    transformation: [{ width: 800, height: 600, crop: 'limit' }]
+const parseFormData = async (req, res, next) => {
+  if (!req.get('content-type')?.includes('multipart/form-data')) {
+    return next();
   }
-});
 
-// Configure multer with better error handling
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
-    fieldSize: 1024 * 1024, // 1MB per field
-    fields: 20, // Allow more fields
-    parts: 25 // Allow more parts
-  },
-  fileFilter: (req, file, cb) => {
-    if (!file) {
-      return cb(null, false);
+  try {
+    const boundary = req.get('content-type').split('boundary=')[1];
+    if (!boundary) {
+      req.body = {};
+      return next();
     }
-    
-    if (file.mimetype && file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('File harus berupa gambar'), false);
-    }
-  }
-});
 
-// Create middleware function that handles both file and fields
-const parseFormData = (req, res, next) => {
-  // Handle multer processing
-  upload.single('gambar')(req, res, (err) => {
-    if (err) {
-      // Handle multer errors
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({
-          status: 'error',
-          message: 'File terlalu besar. Maksimal 5MB'
-        });
-      }
-      
-      if (err.message === 'File harus berupa gambar') {
-        return res.status(400).json({
-          status: 'error',
-          message: 'File harus berupa gambar (jpg, png, jpeg, webp)'
-        });
-      }
-      
-      // For form-data without file, continue without error
-      if (err.message.includes('Unexpected field')) {
-        req.body = req.body || {};
-        return next();
-      }
-      
-      return res.status(400).json({
-        status: 'error',
-        message: 'Error memproses form data',
-        error: err.message
-      });
-    }
+    // Collect raw data
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
     
-    // Multer processed successfully
+    req.on('end', async () => {
+      try {
+        const buffer = Buffer.concat(chunks);
+        const data = buffer.toString('binary');
+        const parts = data.split(`--${boundary}`);
+        
+        const fields = {};
+        let fileData = null;
+
+        for (const part of parts) {
+          if (!part.includes('Content-Disposition: form-data')) continue;
+
+          const nameMatch = part.match(/name="([^"]+)"/);
+          if (!nameMatch) continue;
+
+          const fieldName = nameMatch[1];
+          
+          if (part.includes('Content-Type:')) {
+            // Handle file
+            const filenameMatch = part.match(/filename="([^"]+)"/);
+            if (filenameMatch && filenameMatch[1]) {
+              const contentStart = part.indexOf('\r\n\r\n') + 4;
+              const contentEnd = part.lastIndexOf('\r\n');
+              
+              if (contentStart < contentEnd && contentStart > 0) {
+                const fileBuffer = Buffer.from(part.slice(contentStart, contentEnd), 'binary');
+                
+                if (fileBuffer.length > 0) {
+                  fileData = {
+                    fieldname: fieldName,
+                    originalname: filenameMatch[1],
+                    buffer: fileBuffer,
+                    mimetype: part.match(/Content-Type:\s*([^\r\n]+)/)?.[1] || 'application/octet-stream'
+                  };
+                }
+              }
+            }
+          } else {
+            // Handle text field
+            const valueStart = part.indexOf('\r\n\r\n') + 4;
+            const valueEnd = part.lastIndexOf('\r\n');
+            
+            if (valueStart < valueEnd && valueStart > 0) {
+              const value = part.slice(valueStart, valueEnd).trim();
+              if (value.length > 0) {
+                fields[fieldName] = value;
+              }
+            }
+          }
+        }
+
+        // Set fields to req.body
+        req.body = fields;
+
+        // Upload file to cloudinary if exists
+        if (fileData && fileData.buffer.length > 0) {
+          try {
+            const uploadResult = await new Promise((resolve, reject) => {
+              const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                  folder: 'lapangan',
+                  resource_type: 'image',
+                  allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+                  transformation: [{ width: 800, height: 600, crop: 'limit' }]
+                },
+                (error, result) => {
+                  if (error) reject(error);
+                  else resolve(result);
+                }
+              );
+              uploadStream.end(fileData.buffer);
+            });
+
+            req.file = {
+              fieldname: fileData.fieldname,
+              originalname: fileData.originalname,
+              mimetype: fileData.mimetype,
+              path: uploadResult.secure_url,
+              size: fileData.buffer.length,
+              cloudinary_id: uploadResult.public_id
+            };
+          } catch (uploadError) {
+            console.error('File upload error:', uploadError);
+            return res.status(400).json({
+              status: 'error',
+              message: 'File upload failed',
+              error: uploadError.message
+            });
+          }
+        }
+
+        next();
+      } catch (parseError) {
+        console.error('Form parsing error:', parseError);
+        req.body = {};
+        next();
+      }
+    });
+
+    req.on('error', (error) => {
+      console.error('Request error:', error);
+      req.body = {};
+      next();
+    });
+
+  } catch (error) {
+    console.error('FormParser error:', error);
+    req.body = {};
     next();
-  });
+  }
 };
 
 export default parseFormData;

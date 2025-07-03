@@ -119,30 +119,28 @@ export const updateField = async (req, res) => {
   try {
     const fieldId = req.params.id;
     
-    // More flexible data checking
-    const bodyExists = req.body && typeof req.body === 'object';
-    const hasTextData = bodyExists && Object.keys(req.body).length > 0;
-    const hasFile = req.file && req.file.path;
-    
-    // Debug info (remove in production)
+    // Debug only in development
     if (process.env.NODE_ENV === 'development') {
       console.log('=== UPDATE FIELD DEBUG ===');
-      console.log('Body exists:', bodyExists);
-      console.log('Body keys:', Object.keys(req.body || {}));
-      console.log('Has file:', hasFile);
       console.log('Content-Type:', req.get('Content-Type'));
+      console.log('Body:', req.body);
+      console.log('Body keys:', Object.keys(req.body || {}));
+      console.log('File:', req.file ? 'Present' : 'None');
     }
+
+    // Check if we have any data to process
+    const hasFormData = req.body && Object.keys(req.body).length > 0;
+    const hasFile = req.file && req.file.path;
     
-    // Allow update if we have either text data OR file
-    if (!hasTextData && !hasFile) {
+    if (!hasFormData && !hasFile) {
       return res.status(400).json({
         status: 'error',
         message: 'Tidak ada data yang diterima dari form-data',
         debug: {
           contentType: req.get('Content-Type'),
-          bodyExists: bodyExists,
           bodyKeys: Object.keys(req.body || {}),
-          hasFile: hasFile
+          hasFile: !!req.file,
+          bodyType: typeof req.body
         }
       });
     }
@@ -164,63 +162,62 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // Prepare update data with more robust processing
+    // Process update data
     const updateData = {};
     
-    // Process text fields with better validation
-    if (hasTextData) {
-      Object.keys(req.body).forEach(key => {
+    // Handle text fields
+    if (hasFormData) {
+      const fieldMappings = {
+        nama: 'nama',
+        jenis_lapangan: 'jenis_lapangan', 
+        jam_buka: 'jam_buka',
+        jam_tutup: 'jam_tutup',
+        harga: 'harga',
+        status: 'status'
+      };
+
+      Object.entries(fieldMappings).forEach(([key, dbField]) => {
         const value = req.body[key];
-        
         if (value !== undefined && value !== null && value !== '') {
-          const stringValue = String(value).trim();
+          const trimmedValue = String(value).trim();
           
-          if (stringValue.length > 0) {
-            switch (key) {
-              case 'nama':
-                updateData.nama = stringValue;
-                break;
-              case 'jenis_lapangan':
-                updateData.jenis_lapangan = stringValue;
-                break;
-              case 'jam_buka':
-                updateData.jam_buka = stringValue;
-                break;
-              case 'jam_tutup':
-                updateData.jam_tutup = stringValue;
-                break;
-              case 'harga':
-                const parsedHarga = parseInt(stringValue);
-                if (!isNaN(parsedHarga) && parsedHarga > 0) {
-                  updateData.harga = parsedHarga;
-                }
-                break;
-              case 'status':
-                if (['tersedia', 'tidak tersedia'].includes(stringValue)) {
-                  updateData.status = stringValue;
-                }
-                break;
+          if (trimmedValue.length > 0) {
+            if (key === 'harga') {
+              const numValue = parseInt(trimmedValue);
+              if (!isNaN(numValue) && numValue > 0) {
+                updateData[dbField] = numValue;
+              }
+            } else if (key === 'status') {
+              if (['tersedia', 'tidak tersedia'].includes(trimmedValue)) {
+                updateData[dbField] = trimmedValue;
+              }
+            } else {
+              updateData[dbField] = trimmedValue;
             }
           }
         }
       });
     }
     
-    // Add image if uploaded
+    // Handle file upload
     if (hasFile) {
       updateData.gambar = req.file.path;
     }
 
-    // Check if we have any valid data to update
+    // Validate we have data to update
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
         message: 'Tidak ada data valid untuk diupdate',
-        received: req.body
+        received: {
+          bodyKeys: Object.keys(req.body || {}),
+          bodyValues: Object.values(req.body || {}),
+          hasFile: !!req.file
+        }
       });
     }
 
-    // Check for duplicate name if nama is being updated
+    // Check for duplicate name
     if (updateData.nama && updateData.nama !== currentField.nama) {
       const existingField = await Field.findOne({ 
         nama: updateData.nama, 
@@ -253,7 +250,7 @@ export const updateField = async (req, res) => {
         await client.del('fields:available');
       }
     } catch (redisError) {
-      // Silent fail for cache
+      // Silent cache error
     }
 
     logger.info(`Field updated: ${field._id}`, {

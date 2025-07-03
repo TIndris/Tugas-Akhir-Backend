@@ -65,23 +65,20 @@ app.use(cors({
 // Cookie parser
 app.use(cookieParser());
 
-// Body parser - SEBELUM routes dengan limits yang lebih besar
+// Body parser dengan konfigurasi optimal untuk Vercel
 app.use(express.json({ 
-  limit: '10mb',
-  strict: false 
+  limit: '10mb'
 }));
 
 app.use(express.urlencoded({ 
   extended: true, 
-  limit: '10mb',
-  parameterLimit: 1000,
-  type: 'application/x-www-form-urlencoded'
+  limit: '10mb'
 }));
 
-// Add raw body parser untuk debugging
-app.use('/fields', (req, res, next) => {
+// Skip body parsing untuk multipart requests - biarkan custom parser handle
+app.use((req, res, next) => {
   if (req.get('content-type')?.includes('multipart/form-data')) {
-    // Skip express parsers for multipart, let multer handle it
+    // Don't let express parse multipart data
     return next();
   }
   next();
