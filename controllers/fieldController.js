@@ -593,3 +593,152 @@ export const updateFieldJSON = async (req, res) => {
     });
   }
 };
+
+export const updateFieldHybrid = async (req, res) => {
+  try {
+    const fieldId = req.params.id;
+    
+    // Check content type
+    const isFormData = req.get('content-type')?.includes('multipart/form-data');
+    const isJSON = req.get('content-type')?.includes('application/json');
+    
+    let updateData = {};
+    let hasFile = false;
+
+    if (isJSON) {
+      // Handle JSON update
+      const { nama, jenis_lapangan, jam_buka, jam_tutup, harga, status } = req.body;
+      
+      if (nama) updateData.nama = nama.trim();
+      if (jenis_lapangan) updateData.jenis_lapangan = jenis_lapangan.trim();
+      if (jam_buka) updateData.jam_buka = jam_buka.trim();
+      if (jam_tutup) updateData.jam_tutup = jam_tutup.trim();
+      if (harga) updateData.harga = parseInt(harga);
+      if (status) updateData.status = status.trim();
+      
+    } else if (isFormData) {
+      // Handle form-data update
+      const hasFormData = req.body && Object.keys(req.body).length > 0;
+      hasFile = req.file && req.file.path;
+      
+      if (!hasFormData && !hasFile) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Tidak ada data yang diterima'
+        });
+      }
+
+      if (hasFormData) {
+        if (req.body.nama) updateData.nama = req.body.nama.trim();
+        if (req.body.jenis_lapangan) updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
+        if (req.body.jam_buka) updateData.jam_buka = req.body.jam_buka.trim();
+        if (req.body.jam_tutup) updateData.jam_tutup = req.body.jam_tutup.trim();
+        if (req.body.harga) updateData.harga = parseInt(req.body.harga);
+        if (req.body.status) updateData.status = req.body.status.trim();
+      }
+
+      if (hasFile) {
+        updateData.gambar = req.file.path;
+      }
+    } else {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Content-Type tidak didukung'
+      });
+    }
+
+    // Validate we have data to update
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Tidak ada data untuk diupdate'
+      });
+    }
+
+    // Validate field ID
+    if (!mongoose.Types.ObjectId.isValid(fieldId)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID lapangan tidak valid'
+      });
+    }
+
+    // Get current field
+    const currentField = await Field.findById(fieldId);
+    if (!currentField) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Lapangan tidak ditemukan'
+      });
+    }
+
+    // Check for duplicate name
+    if (updateData.nama && updateData.nama !== currentField.nama) {
+      const existingField = await Field.findOne({ 
+        nama: updateData.nama, 
+        _id: { $ne: fieldId } 
+      });
+      
+      if (existingField) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Nama lapangan sudah digunakan'
+        });
+      }
+    }
+
+    // Update field
+    const field = await Field.findByIdAndUpdate(
+      fieldId,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    // Clear cache
+    try {
+      if (client && client.isOpen) {
+        await client.del('fields:all:all:all');
+        await client.del(`field:${fieldId}`);
+        await client.del('fields:available');
+      }
+    } catch (redisError) {
+      // Silent cache error
+    }
+
+    logger.info(`Field updated: ${field._id}`, {
+      role: req.user.role,
+      action: 'UPDATE_FIELD_HYBRID',
+      method: isJSON ? 'JSON' : 'FORM_DATA',
+      hasFile: hasFile
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Lapangan berhasil diperbarui',
+      data: { field }
+    });
+    
+  } catch (error) {
+    logger.error(`Field update error: ${error.message}`);
+
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Data tidak valid',
+        error: { details: Object.values(error.errors).map(err => ({ field: err.path, message: err.message })) }
+      });
+    }
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Nama lapangan sudah digunakan'
+      });
+    }
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat memperbarui lapangan'
+    });
+  }
+};
