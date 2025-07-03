@@ -117,40 +117,60 @@ export const createField = async (req, res) => {
 
 export const updateField = async (req, res) => {
   try {
+    console.log('=== UPDATE FIELD DEBUG ===');
+    console.log('Field ID:', req.params.id);
+    console.log('Content-Type:', req.get('Content-Type'));
+    console.log('Raw req.body:', req.body);
+    console.log('req.file:', req.file);
+    console.log('typeof req.body:', typeof req.body);
+    console.log('Object.keys(req.body):', Object.keys(req.body || {}));
+    
     const fieldId = req.params.id;
-    const updateData = { ...req.body };
+    
+    // Check if body exists and has data
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Request body kosong atau tidak valid',
+        debug: {
+          body: req.body,
+          contentType: req.get('Content-Type'),
+          hasFile: !!req.file
+        }
+      });
+    }
 
+    const updateData = { ...req.body };
+    
     // Add new image if uploaded
     if (req.file) {
-      updateData.gambar = req.file.path; // Cloudinary URL
+      updateData.gambar = req.file.path;
     }
+
+    console.log('Update data to be applied:', updateData);
 
     // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
-        message: 'ID lapangan tidak valid',
-        error: {
-          code: 'INVALID_OBJECT_ID',
-          field: 'id',
-          value: fieldId
-        }
+        message: 'ID lapangan tidak valid'
       });
     }
 
-    // Check if field exists
+    // Get current field
     const currentField = await Field.findById(fieldId);
     if (!currentField) {
       return res.status(404).json({
         status: 'error',
-        message: 'Lapangan tidak ditemukan',
-        error: {
-          code: 'FIELD_NOT_FOUND',
-          field: 'id',
-          value: fieldId
-        }
+        message: 'Lapangan tidak ditemukan'
       });
     }
+
+    console.log('Current field before update:', {
+      nama: currentField.nama,
+      harga: currentField.harga,
+      status: currentField.status
+    });
 
     // Check for duplicate name (if nama is being updated)
     if (updateData.nama && updateData.nama !== currentField.nama) {
@@ -162,24 +182,29 @@ export const updateField = async (req, res) => {
       if (existingField) {
         return res.status(409).json({
           status: 'error',
-          message: 'Nama lapangan sudah digunakan',
-          error: {
-            code: 'DUPLICATE_FIELD_NAME',
-            field: 'nama',
-            value: updateData.nama
-          }
+          message: 'Nama lapangan sudah digunakan'
         });
       }
     }
 
+    console.log('About to update with:', updateData);
+
+    // Update field
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
       {
-        new: true,
-        runValidators: true
+        new: true, // Return updated document
+        runValidators: true // Validate the update
       }
     );
+
+    console.log('Field after update:', {
+      nama: field.nama,
+      harga: field.harga,
+      status: field.status,
+      updatedAt: field.updatedAt
+    });
 
     // Clear cache
     try {
@@ -187,68 +212,32 @@ export const updateField = async (req, res) => {
         await client.del('fields:all:all:all');
         await client.del(`field:${fieldId}`);
         await client.del('fields:available');
-        logger.info('Fields cache cleared after update');
+        console.log('Cache cleared successfully');
       }
     } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
+      console.warn('Redis cache clear error:', redisError);
     }
 
-    logger.info(`Field updated: ${field._id}`, {
-      role: req.user.role,
-      action: 'UPDATE_FIELD'
-    });
-    
     res.status(200).json({
       status: 'success',
       message: 'Lapangan berhasil diperbarui',
-      data: { field }
+      data: { field },
+      debug: {
+        receivedData: updateData,
+        appliedUpdate: true
+      }
     });
     
   } catch (error) {
-    logger.error(`Field update error: ${error.message}`, {
-      action: 'UPDATE_FIELD_ERROR',
-      fieldId: req.params.id
-    });
-
-    // Handle MongoDB duplicate key error
-    if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      const value = error.keyValue[field];
-      
-      return res.status(409).json({
-        status: 'error',
-        message: `${field === 'nama' ? 'Nama lapangan' : field} sudah digunakan`,
-        error: {
-          code: 'DUPLICATE_KEY_ERROR',
-          field: field,
-          value: value
-        }
-      });
-    }
-
-    // Handle validation errors
-    if (error.name === 'ValidationError') {
-      const validationErrors = Object.values(error.errors).map(err => ({
-        field: err.path,
-        message: err.message
-      }));
-
-      return res.status(400).json({
-        status: 'error',
-        message: 'Data tidak valid',
-        error: {
-          code: 'VALIDATION_ERROR',
-          details: validationErrors
-        }
-      });
-    }
-
+    console.error('=== UPDATE ERROR ===');
+    console.error('Error:', error);
+    
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat memperbarui lapangan',
       error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: error.message
+        message: error.message,
+        stack: error.stack
       }
     });
   }
