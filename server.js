@@ -1,119 +1,68 @@
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
-import session from 'express-session';
-import passport from 'passport';
-import cookieParser from 'cookie-parser';
+import dotenv from 'dotenv';
 import helmet from 'helmet';
-import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import mongoSanitize from 'express-mongo-sanitize';
-import connectDB from './config/db.js';
-import { connectRedis } from './config/redis.js'; 
-import authRoutes from './routes/authRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import bookingRoutes from './routes/bookingRoutes.js';
-import fieldRoutes from './routes/fieldRoutes.js';
-import logger from './utils/logger.js';
-import './config/passport.js';
-import { initAdmin } from './config/initAdmin.js';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-// Connect to MongoDB, Redis and initialize admin
-const initialize = async () => {
-  try {
-    await connectDB();
-    await connectRedis();
-    
-    const adminInitialized = await initAdmin();
-    if (!adminInitialized) {
-      throw new Error('Failed to initialize admin account');
-    }
-    
-    app.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
-    });
-  } catch (err) {
-    logger.error('Initialization failed:', err);
-    process.exit(1);
+// CRITICAL: Set trust proxy untuk Vercel
+app.set('trust proxy', 1);
+
+// Rate limiting dengan konfigurasi yang benar untuk production
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Terlalu banyak request dari IP ini',
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip trust proxy validation
+  skip: (req) => {
+    // Skip rate limiting untuk development
+    return process.env.NODE_ENV === 'development';
   }
-};
+});
 
-initialize();
+// Apply rate limiting
+app.use(limiter);
 
 // Security middleware
-app.use(helmet());
-app.use(mongoSanitize());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
-app.use('/api', limiter);
-
-// CORS
+// CORS configuration
 app.use(cors({
-  origin: '*',
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://your-frontend-domain.vercel.app'] 
+    : '*',
   credentials: true
 }));
 
-// Cookie parser
-app.use(cookieParser());
+// Body parser
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Body parser configuration
-app.use(express.json({ 
-  limit: '10mb'
-}));
-app.use(express.urlencoded({ 
-  extended: true, 
-  limit: '10mb'
-}));
-
-// Skip body parsing untuk multipart requests - biarkan custom parser handle
+// Skip express body parsing untuk multipart
 app.use((req, res, next) => {
   if (req.get('content-type')?.includes('multipart/form-data')) {
-    // Don't let express parse multipart data
     return next();
   }
   next();
 });
 
-// Custom logging
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    const logMessage = `${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`;
-    logger.info(logMessage);
-  });
-  next();
-});
+// Import routes dan middleware lainnya
+import authRoutes from './routes/authRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
+import bookingRoutes from './routes/bookingRoutes.js';
+import fieldRoutes from './routes/fieldRoutes.js';
 
-// Session & Passport
-app.use(session({
-  secret: process.env.SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000,
-    sameSite: 'strict'
-  }
-}));
-app.use(passport.initialize());
-app.use(passport.session());
-
-// Routes - SETELAH semua middleware
+// Routes
 app.use('/auth', authRoutes);
-app.use('/admin', adminRoutes);
-app.use('/bookings', bookingRoutes);
-app.use('/fields', fieldRoutes);
+app.use('/admin/fields', fieldRoutes);
+app.use('/admin/bookings', bookingRoutes);
 
 // Error handlers
 app.use((req, res, next) => {

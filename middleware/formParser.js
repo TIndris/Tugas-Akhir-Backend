@@ -1,48 +1,52 @@
 import cloudinary from '../config/cloudinary.js';
 
 const parseFormData = (req, res, next) => {
+  // Skip jika bukan multipart
   if (!req.get('content-type')?.includes('multipart/form-data')) {
     return next();
   }
 
-  // Get boundary from content-type
-  const contentType = req.get('content-type');
-  const boundary = contentType.split('boundary=')[1];
-  
+  const boundary = req.get('content-type').match(/boundary=(.+)$/)?.[1];
   if (!boundary) {
     req.body = {};
     return next();
   }
 
-  let body = '';
-  
-  // Important: Set encoding to binary untuk file handling
-  req.setEncoding('binary');
+  const chunks = [];
+  let totalSize = 0;
+  const maxSize = 10 * 1024 * 1024; // 10MB
 
   req.on('data', chunk => {
-    body += chunk;
+    totalSize += chunk.length;
+    if (totalSize > maxSize) {
+      return res.status(413).json({
+        status: 'error',
+        message: 'File terlalu besar'
+      });
+    }
+    chunks.push(chunk);
   });
 
   req.on('end', async () => {
     try {
-      // Parse form data manually
-      const formData = parseMultipartData(body, boundary);
+      const buffer = Buffer.concat(chunks);
+      const result = parseMultipartBuffer(buffer, boundary);
       
-      // Set parsed data
-      req.body = formData.fields;
+      // Set hasil parsing
+      req.body = result.fields;
       
-      // Handle file upload if present
-      if (formData.file) {
+      // Upload file jika ada
+      if (result.file) {
         try {
-          const uploadResult = await uploadToCloudinary(formData.file);
+          const uploadResult = await uploadFileToCloudinary(result.file);
           req.file = {
-            fieldname: formData.file.fieldname,
-            originalname: formData.file.filename,
+            fieldname: result.file.name,
+            originalname: result.file.filename,
             path: uploadResult.secure_url,
-            size: formData.file.data.length
+            size: result.file.data.length
           };
         } catch (uploadError) {
-          // Continue without file if upload fails
+          // Continue tanpa file jika upload gagal
         }
       }
 
@@ -52,70 +56,74 @@ const parseFormData = (req, res, next) => {
       next();
     }
   });
+
+  req.on('error', () => {
+    req.body = {};
+    next();
+  });
 };
 
-// Helper function to parse multipart data
-function parseMultipartData(body, boundary) {
+function parseMultipartBuffer(buffer, boundary) {
   const fields = {};
   let file = null;
 
-  // Split by boundary
-  const parts = body.split('--' + boundary);
+  try {
+    const data = buffer.toString('binary');
+    const parts = data.split(`--${boundary}`);
 
-  for (let part of parts) {
-    if (!part.includes('Content-Disposition')) continue;
+    for (const part of parts) {
+      if (!part.includes('Content-Disposition: form-data')) continue;
 
-    // Extract name
-    const nameMatch = part.match(/name="([^"]+)"/);
-    if (!nameMatch) continue;
-    
-    const name = nameMatch[1];
+      const nameMatch = part.match(/name="([^"]+)"/);
+      if (!nameMatch) continue;
 
-    if (part.includes('filename=')) {
-      // File field
-      const filenameMatch = part.match(/filename="([^"]+)"/);
-      if (filenameMatch) {
-        const filename = filenameMatch[1];
+      const fieldName = nameMatch[1];
+
+      if (part.includes('filename=')) {
+        // File handling
+        const filenameMatch = part.match(/filename="([^"]+)"/);
+        if (filenameMatch) {
+          const headerEnd = part.indexOf('\r\n\r\n');
+          const contentEnd = part.lastIndexOf('\r\n');
+          
+          if (headerEnd > 0 && contentEnd > headerEnd) {
+            const fileData = part.slice(headerEnd + 4, contentEnd);
+            if (fileData.length > 100) { // Valid file
+              file = {
+                name: fieldName,
+                filename: filenameMatch[1],
+                data: Buffer.from(fileData, 'binary')
+              };
+            }
+          }
+        }
+      } else {
+        // Text field handling
+        const valueStart = part.indexOf('\r\n\r\n');
+        const valueEnd = part.lastIndexOf('\r\n');
         
-        // Find file data
-        const dataStart = part.indexOf('\r\n\r\n') + 4;
-        const dataEnd = part.lastIndexOf('\r\n');
-        
-        if (dataStart < dataEnd) {
-          const fileData = part.substring(dataStart, dataEnd);
-          if (fileData.length > 0) {
-            file = {
-              fieldname: name,
-              filename: filename,
-              data: Buffer.from(fileData, 'binary')
-            };
+        if (valueStart > 0 && valueEnd > valueStart) {
+          const value = part.slice(valueStart + 4, valueEnd).trim();
+          if (value) {
+            fields[fieldName] = value;
           }
         }
       }
-    } else {
-      // Text field
-      const dataStart = part.indexOf('\r\n\r\n') + 4;
-      const dataEnd = part.lastIndexOf('\r\n');
-      
-      if (dataStart < dataEnd) {
-        const value = part.substring(dataStart, dataEnd).trim();
-        if (value) {
-          fields[name] = value;
-        }
-      }
     }
+  } catch (error) {
+    // Silent parsing error
   }
 
   return { fields, file };
 }
 
-// Helper function to upload to cloudinary
-function uploadToCloudinary(file) {
+function uploadFileToCloudinary(file) {
   return new Promise((resolve, reject) => {
     cloudinary.uploader.upload_stream(
       {
         folder: 'lapangan',
-        resource_type: 'image'
+        resource_type: 'image',
+        timeout: 10000 // 10 second timeout
       },
       (error, result) => {
         if (error) reject(error);

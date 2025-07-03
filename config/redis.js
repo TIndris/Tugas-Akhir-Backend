@@ -1,41 +1,62 @@
-import redis from 'redis';
-import logger from '../utils/logger.js';
+import { createClient } from 'redis';
+import logger from './logger.js';
 
-const client = redis.createClient({
-  url: process.env.REDIS_URL,
-  retry_delay_on_cluster_down: 300,
-  retry_delay_on_failover: 100,
-  max_attempts: 3,
-  socket: {
-    connectTimeout: 60000,
-    lazyConnect: true,
-  }
-});
-
-client.on('error', (err) => {
-  logger.error('Redis Client Error:', err);
-});
-
-client.on('connect', () => {
-  logger.info('Redis connected successfully');
-});
-
-client.on('reconnecting', () => {
-  logger.info('Redis reconnecting...');
-});
+let client = null;
 
 const connectRedis = async () => {
+  if (client && client.isOpen) {
+    return client;
+  }
+
   try {
-    if (!client.isOpen) {
-      await client.connect();
-    }
-    logger.info('Redis connection established');
+    client = createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        connectTimeout: 5000,
+        lazyConnect: true,
+        // Untuk serverless, set keepAlive false
+        keepAlive: false,
+        // Handle connection errors gracefully
+        reconnectStrategy: (retries) => {
+          if (retries > 3) {
+            return false; // Stop reconnecting after 3 attempts
+          }
+          return Math.min(retries * 50, 500);
+        }
+      }
+    });
+
+    client.on('error', (err) => {
+      logger.error('Redis Client Error:', err);
+      // Don't crash the app on Redis errors
+    });
+
+    client.on('connect', () => {
+      logger.info('Redis connected successfully');
+    });
+
+    client.on('reconnecting', () => {
+      logger.info('Redis reconnecting...');
+    });
+
+    client.on('end', () => {
+      logger.info('Redis connection ended');
+    });
+
+    await client.connect();
+    return client;
   } catch (error) {
     logger.error('Redis connection failed:', error);
-    if (process.env.NODE_ENV === 'production') {
-      logger.warn('Continuing without Redis cache...');
-    }
+    client = null;
+    return null;
   }
 };
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  if (client && client.isOpen) {
+    await client.quit();
+  }
+});
 
 export { client, connectRedis };
