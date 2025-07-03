@@ -118,26 +118,45 @@ export const createField = async (req, res) => {
 export const updateField = async (req, res) => {
   try {
     console.log('=== UPDATE FIELD DEBUG ===');
-    console.log('Field ID:', req.params.id);
     console.log('Content-Type:', req.get('Content-Type'));
     console.log('Raw req.body:', req.body);
     console.log('req.file:', req.file);
-    console.log('typeof req.body:', typeof req.body);
-    console.log('Object.keys(req.body):', Object.keys(req.body || {}));
+    console.log('Headers:', req.headers);
     
     const fieldId = req.params.id;
     
-    // Check if body exists and has data
-    if (!req.body || Object.keys(req.body).length === 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Request body kosong atau tidak valid',
-        debug: {
-          body: req.body,
-          contentType: req.get('Content-Type'),
-          hasFile: !!req.file
-        }
-      });
+    // Handle empty body differently for multipart vs json
+    const isMultipart = req.get('Content-Type')?.includes('multipart/form-data');
+    
+    if (isMultipart) {
+      // For multipart, req.body might be empty but that's ok if we have file
+      console.log('Multipart request detected');
+      
+      if (!req.body && !req.file) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'No data received in multipart request',
+          debug: {
+            hasBody: !!req.body,
+            hasFile: !!req.file,
+            bodyKeys: Object.keys(req.body || {}),
+            contentType: req.get('Content-Type')
+          }
+        });
+      }
+    } else {
+      // For JSON request
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Request body kosong atau tidak valid',
+          debug: {
+            body: req.body,
+            contentType: req.get('Content-Type'),
+            hasFile: !!req.file
+          }
+        });
+      }
     }
 
     const updateData = { ...req.body };
@@ -145,6 +164,7 @@ export const updateField = async (req, res) => {
     // Add new image if uploaded
     if (req.file) {
       updateData.gambar = req.file.path;
+      console.log('File uploaded:', req.file.path);
     }
 
     console.log('Update data to be applied:', updateData);
@@ -187,15 +207,13 @@ export const updateField = async (req, res) => {
       }
     }
 
-    console.log('About to update with:', updateData);
-
     // Update field
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
       {
-        new: true, // Return updated document
-        runValidators: true // Validate the update
+        new: true,
+        runValidators: true
       }
     );
 
@@ -212,7 +230,6 @@ export const updateField = async (req, res) => {
         await client.del('fields:all:all:all');
         await client.del(`field:${fieldId}`);
         await client.del('fields:available');
-        console.log('Cache cleared successfully');
       }
     } catch (redisError) {
       console.warn('Redis cache clear error:', redisError);
@@ -221,11 +238,7 @@ export const updateField = async (req, res) => {
     res.status(200).json({
       status: 'success',
       message: 'Lapangan berhasil diperbarui',
-      data: { field },
-      debug: {
-        receivedData: updateData,
-        appliedUpdate: true
-      }
+      data: { field }
     });
     
   } catch (error) {
@@ -236,8 +249,7 @@ export const updateField = async (req, res) => {
       status: 'error',
       message: 'Terjadi kesalahan saat memperbarui lapangan',
       error: {
-        message: error.message,
-        stack: error.stack
+        message: error.message
       }
     });
   }

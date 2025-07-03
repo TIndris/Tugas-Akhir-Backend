@@ -7,7 +7,7 @@ import {
   deleteField 
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
-import upload from '../middleware/upload.js';
+import upload, { debugMulter } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -15,17 +15,19 @@ const router = express.Router();
 router.get('/', getAllFields);
 router.get('/:id', getField);
 
-// Admin routes dengan middleware yang benar
+// Admin routes dengan proper middleware order
 router.patch('/:id', 
   authenticateToken, 
-  restrictTo('admin'), 
-  upload.single('gambar'), // ← Pastikan ini ada
+  restrictTo('admin'),
+  debugMulter, // ← Add debug middleware
+  upload.single('gambar'), 
   updateField
 );
 
 router.post('/', 
   authenticateToken, 
-  restrictTo('admin'), 
+  restrictTo('admin'),
+  debugMulter, // ← Add debug middleware
   upload.single('gambar'),
   createField
 );
