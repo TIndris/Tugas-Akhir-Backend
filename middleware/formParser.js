@@ -1,136 +1,94 @@
+import fileUpload from 'express-fileupload';
 import cloudinary from '../config/cloudinary.js';
 
-const parseFormData = (req, res, next) => {
-  // Skip jika bukan multipart
+// Configure file upload middleware
+const fileUploadMiddleware = fileUpload({
+  limits: { 
+    fileSize: 5 * 1024 * 1024, // 5MB
+    fieldSize: 1024 * 1024,    // 1MB per field
+    fields: 20,
+    files: 1
+  },
+  abortOnLimit: true,
+  responseOnLimit: 'File terlalu besar. Maksimal 5MB',
+  useTempFiles: false,
+  tempFileDir: '/tmp/',
+  debug: false
+});
+
+const parseFormData = async (req, res, next) => {
+  // Skip if not multipart
   if (!req.get('content-type')?.includes('multipart/form-data')) {
     return next();
   }
 
-  const boundary = req.get('content-type').match(/boundary=(.+)$/)?.[1];
-  if (!boundary) {
-    req.body = {};
-    return next();
-  }
-
-  const chunks = [];
-  let totalSize = 0;
-  const maxSize = 10 * 1024 * 1024; // 10MB
-
-  req.on('data', chunk => {
-    totalSize += chunk.length;
-    if (totalSize > maxSize) {
-      return res.status(413).json({
+  // Apply express-fileupload middleware
+  fileUploadMiddleware(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({
         status: 'error',
-        message: 'File terlalu besar'
+        message: 'Error parsing form data',
+        error: err.message
       });
     }
-    chunks.push(chunk);
-  });
 
-  req.on('end', async () => {
     try {
-      const buffer = Buffer.concat(chunks);
-      const result = parseMultipartBuffer(buffer, boundary);
-      
-      // Set hasil parsing
-      req.body = result.fields;
-      
-      // Upload file jika ada
-      if (result.file) {
+      // Process uploaded file if exists
+      if (req.files && req.files.gambar) {
+        const file = req.files.gambar;
+        
+        // Validate file type
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        if (!allowedTypes.includes(file.mimetype)) {
+          return res.status(400).json({
+            status: 'error',
+            message: 'File harus berupa gambar (jpg, png, jpeg, webp)'
+          });
+        }
+
+        // Upload to Cloudinary
         try {
-          const uploadResult = await uploadFileToCloudinary(result.file);
+          const uploadResult = await new Promise((resolve, reject) => {
+            cloudinary.uploader.upload_stream(
+              {
+                folder: 'lapangan',
+                resource_type: 'image',
+                transformation: [{ width: 800, height: 600, crop: 'limit' }]
+              },
+              (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+              }
+            ).end(file.data);
+          });
+
+          // Set file info to req.file
           req.file = {
-            fieldname: result.file.name,
-            originalname: result.file.filename,
+            fieldname: 'gambar',
+            originalname: file.name,
+            mimetype: file.mimetype,
             path: uploadResult.secure_url,
-            size: result.file.data.length
+            size: file.size,
+            cloudinary_id: uploadResult.public_id
           };
         } catch (uploadError) {
-          // Continue tanpa file jika upload gagal
+          return res.status(400).json({
+            status: 'error',
+            message: 'File upload gagal',
+            error: uploadError.message
+          });
         }
       }
 
       next();
     } catch (error) {
-      req.body = {};
-      next();
+      return res.status(400).json({
+        status: 'error',
+        message: 'Error processing form data',
+        error: error.message
+      });
     }
-  });
-
-  req.on('error', () => {
-    req.body = {};
-    next();
   });
 };
-
-function parseMultipartBuffer(buffer, boundary) {
-  const fields = {};
-  let file = null;
-
-  try {
-    const data = buffer.toString('binary');
-    const parts = data.split(`--${boundary}`);
-
-    for (const part of parts) {
-      if (!part.includes('Content-Disposition: form-data')) continue;
-
-      const nameMatch = part.match(/name="([^"]+)"/);
-      if (!nameMatch) continue;
-
-      const fieldName = nameMatch[1];
-
-      if (part.includes('filename=')) {
-        // File handling
-        const filenameMatch = part.match(/filename="([^"]+)"/);
-        if (filenameMatch) {
-          const headerEnd = part.indexOf('\r\n\r\n');
-          const contentEnd = part.lastIndexOf('\r\n');
-          
-          if (headerEnd > 0 && contentEnd > headerEnd) {
-            const fileData = part.slice(headerEnd + 4, contentEnd);
-            if (fileData.length > 100) { // Valid file
-              file = {
-                name: fieldName,
-                filename: filenameMatch[1],
-                data: Buffer.from(fileData, 'binary')
-              };
-            }
-          }
-        }
-      } else {
-        // Text field handling
-        const valueStart = part.indexOf('\r\n\r\n');
-        const valueEnd = part.lastIndexOf('\r\n');
-        
-        if (valueStart > 0 && valueEnd > valueStart) {
-          const value = part.slice(valueStart + 4, valueEnd).trim();
-          if (value) {
-            fields[fieldName] = value;
-          }
-        }
-      }
-    }
-  } catch (error) {
-    // Silent parsing error
-  }
-
-  return { fields, file };
-}
-
-function uploadFileToCloudinary(file) {
-  return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_stream(
-      {
-        folder: 'lapangan',
-        resource_type: 'image',
-        timeout: 10000 // 10 second timeout
-      },
-      (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
-      }
-    ).end(file.data);
-  });
-}
 
 export default parseFormData;

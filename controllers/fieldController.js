@@ -606,7 +606,7 @@ export const updateFieldHybrid = async (req, res) => {
     let hasFile = false;
 
     if (isJSON) {
-      // Handle JSON update (sudah working)
+      // Handle JSON update (working)
       const { nama, jenis_lapangan, jam_buka, jam_tutup, harga, status } = req.body;
       
       if (nama) updateData.nama = nama.trim();
@@ -617,39 +617,44 @@ export const updateFieldHybrid = async (req, res) => {
       if (status) updateData.status = status.trim();
       
     } else if (isFormData) {
-      // SIMPLIFIED form-data handling
+      // Handle form-data dengan express-fileupload
       
-      // Direct check untuk req.body dari parser
-      const parsedFields = req.body || {};
-      const fieldCount = Object.keys(parsedFields).length;
+      // req.body otomatis parsed oleh express-fileupload
+      const fields = req.body || {};
       hasFile = req.file && req.file.path;
       
-      // Debug response untuk troubleshooting
-      if (fieldCount === 0 && !hasFile) {
+      // Check if we have any data
+      const hasFormFields = Object.keys(fields).length > 0;
+      
+      if (!hasFormFields && !hasFile) {
         return res.status(400).json({
           status: 'error',
           message: 'Tidak ada data yang diterima dari form-data',
           debug: {
-            parsedFieldCount: fieldCount,
-            parsedFields: parsedFields,
+            fieldsReceived: Object.keys(fields),
             hasFile: hasFile,
-            reqBodyType: typeof req.body,
+            bodyType: typeof req.body,
             contentType: req.get('content-type')
           }
         });
       }
 
-      // Process parsed fields directly
-      if (parsedFields.nama) updateData.nama = parsedFields.nama;
-      if (parsedFields.jenis_lapangan) updateData.jenis_lapangan = parsedFields.jenis_lapangan;
-      if (parsedFields.jam_buka) updateData.jam_buka = parsedFields.jam_buka;
-      if (parsedFields.jam_tutup) updateData.jam_tutup = parsedFields.jam_tutup;
-      if (parsedFields.harga) {
-        const harga = parseInt(parsedFields.harga);
-        if (!isNaN(harga)) updateData.harga = harga;
+      // Process form fields (express-fileupload sudah parse otomatis)
+      if (fields.nama) updateData.nama = String(fields.nama).trim();
+      if (fields.jenis_lapangan) updateData.jenis_lapangan = String(fields.jenis_lapangan).trim();
+      if (fields.jam_buka) updateData.jam_buka = String(fields.jam_buka).trim();
+      if (fields.jam_tutup) updateData.jam_tutup = String(fields.jam_tutup).trim();
+      if (fields.harga) {
+        const harga = parseInt(fields.harga);
+        if (!isNaN(harga) && harga > 0) {
+          updateData.harga = harga;
+        }
       }
-      if (parsedFields.status) updateData.status = parsedFields.status;
+      if (fields.status && ['tersedia', 'tidak tersedia'].includes(String(fields.status).trim())) {
+        updateData.status = String(fields.status).trim();
+      }
 
+      // Add uploaded image
       if (hasFile) {
         updateData.gambar = req.file.path;
       }
@@ -707,7 +712,7 @@ export const updateFieldHybrid = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // Clear cache
+    // Clear cache (with error handling)
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -715,8 +720,16 @@ export const updateFieldHybrid = async (req, res) => {
         await client.del('fields:available');
       }
     } catch (redisError) {
-      // Silent cache error
+      // Silent cache error - Redis issues tidak crash app
     }
+
+    logger.info(`Field updated: ${field._id}`, {
+      role: req.user.role,
+      action: 'UPDATE_FIELD_HYBRID',
+      method: isJSON ? 'JSON' : 'FORM_DATA',
+      hasFile: hasFile,
+      updatedFields: Object.keys(updateData)
+    });
 
     res.status(200).json({
       status: 'success',
