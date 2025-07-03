@@ -1,13 +1,5 @@
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
-import {
-  validateTimeFormat,
-  validateImageUrl,
-  validateFieldTimeOrder,
-  validateFieldOperatingHours,
-  FIELD_TYPES,
-  PRICE_LIMITS
-} from '../validators/fieldValidators.js';
 
 const fieldSchema = new mongoose.Schema({
   nama: {
@@ -20,39 +12,35 @@ const fieldSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Jenis lapangan harus diisi'],
     trim: true,
-    enum: {
-      values: FIELD_TYPES,
-      message: 'Jenis lapangan tidak valid'
-    }
+    enum: ['Badminton', 'Futsal', 'Tenis', 'Basket', 'Voli'] // Use direct array
   },
   jam_buka: {
     type: String,
-    required: [true, 'Jam buka harus diisi'],
-    validate: {
-      validator: validateTimeFormat,
-      message: 'Format jam buka tidak valid. Gunakan format HH:MM (00:00 - 23:59)'
-    }
+    required: [true, 'Jam buka harus diisi']
+    // COMMENT OUT validation temporarily
+    // validate: {
+    //   validator: validateTimeFormat,
+    //   message: 'Format jam buka tidak valid. Gunakan format HH:MM (00:00 - 23:59)'
+    // }
   },
   jam_tutup: {
     type: String,
-    required: [true, 'Jam tutup harus diisi'],
-    validate: {
-      validator: validateTimeFormat,
-      message: 'Format jam tutup tidak valid. Gunakan format HH:MM (00:00 - 23:59)'
-    }
+    required: [true, 'Jam tutup harus diisi']
+    // COMMENT OUT validation temporarily
+    // validate: {
+    //   validator: validateTimeFormat,
+    //   message: 'Format jam tutup tidak valid. Gunakan format HH:MM (00:00 - 23:59)'
+    // }
   },
   harga: {
     type: Number,
     required: [true, 'Harga harus diisi'],
-    min: [PRICE_LIMITS.MIN, `Harga minimal Rp ${PRICE_LIMITS.MIN.toLocaleString('id-ID')}`],
-    max: [PRICE_LIMITS.MAX, `Harga maksimal Rp ${PRICE_LIMITS.MAX.toLocaleString('id-ID')}`]
+    min: [1000, 'Harga minimal Rp 1.000'],
+    max: [10000000, 'Harga maksimal Rp 10.000.000']
   },
   status: {
     type: String,
-    enum: {
-      values: ['tersedia', 'tidak tersedia'],
-      message: 'Status harus tersedia atau tidak tersedia'
-    },
+    enum: ['tersedia', 'tidak tersedia'],
     default: 'tersedia'
   },
   createdBy: {
@@ -61,11 +49,12 @@ const fieldSchema = new mongoose.Schema({
     required: true
   },
   gambar: {
-    type: String,
-    validate: {
-      validator: validateImageUrl,
-      message: 'URL gambar tidak valid'
-    }
+    type: String
+    // COMMENT OUT validation temporarily
+    // validate: {
+    //   validator: validateImageUrl,
+    //   message: 'URL gambar tidak valid'
+    // }
   }
 }, {
   timestamps: true,
@@ -73,9 +62,9 @@ const fieldSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Pre-save validations
-fieldSchema.pre('save', validateFieldTimeOrder);
-fieldSchema.pre('save', validateFieldOperatingHours);
+// COMMENT OUT pre-save validations temporarily
+// fieldSchema.pre('save', validateFieldTimeOrder);
+// fieldSchema.pre('save', validateFieldOperatingHours);
 
 // Virtual fields untuk format Indonesia
 fieldSchema.virtual('createdAtWIB').get(function() {
