@@ -1,7 +1,7 @@
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
-import logger from '../utils/logger.js';
+import logger from './logger.js';  
 
 dotenv.config();
 

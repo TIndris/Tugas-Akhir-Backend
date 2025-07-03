@@ -1,6 +1,6 @@
 import Field from '../models/Field.js';
 import { client } from '../config/redis.js';
-import logger from '../utils/logger.js';
+import logger from '../config/logger.js';  
 import mongoose from 'mongoose';
 
 export const createField = async (req, res) => {

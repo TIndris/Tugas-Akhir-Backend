@@ -1,6 +1,7 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import User from '../models/User.js';
+import logger from './logger.js';  // ← FIXED: use local logger
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -20,7 +21,6 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Hapus atau ganti console.log dengan logger
 passport.use(
   new GoogleStrategy(
     {

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import logger from '../utils/logger.js';
+import logger from './logger.js'; // ← FIXED: use local logger
 
 const connectDB = async () => {
   try {

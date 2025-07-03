@@ -1,6 +1,6 @@
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
-import logger from '../utils/logger.js';
+import logger from '../config/logger.js';  // ← FIXED PATH
 
 export const createCashier = async (req, res) => {
   try {

@@ -5,10 +5,10 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 
-// Import configurations
+// Import configurations - FIXED PATHS
 import connectDB from './config/db.js';
 import { connectRedis } from './config/redis.js'; 
-import logger from './utils/logger.js';
+import logger from './config/logger.js';  // ← FIXED PATH
 import { initAdmin } from './config/initAdmin.js';
 
 // Import routes
@@ -126,13 +126,5 @@ const initializeApp = async () => {
 // Initialize app
 initializeApp();
 
-// Start server (only in development)
-const PORT = process.env.PORT || 5000;
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => {
-    logger.info(`Server running on port ${PORT}`);
-  });
-}
-
-// Export for Vercel
+// Export for Vercel (don't listen in production)
 export default app;

@@ -1,7 +1,7 @@
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
 import { client } from '../config/redis.js';
-import logger from '../utils/logger.js';
+import logger from '../config/logger.js';  // ← FIXED PATH
 
 // Create booking dengan cache invalidation
 export const createBooking = async (req, res) => {
