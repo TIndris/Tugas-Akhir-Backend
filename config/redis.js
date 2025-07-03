@@ -12,23 +12,24 @@ const connectRedis = async () => {
     client = createClient({
       url: process.env.REDIS_URL,
       socket: {
-        connectTimeout: 5000,
+        connectTimeout: 10000,
         lazyConnect: true,
-        // Untuk serverless, set keepAlive false
         keepAlive: false,
-        // Handle connection errors gracefully
         reconnectStrategy: (retries) => {
-          if (retries > 3) {
-            return false; // Stop reconnecting after 3 attempts
+          if (retries > 2) {
+            logger.warn('Redis: Max reconnection attempts reached, stopping');
+            return false; // Stop reconnecting after 2 attempts
           }
-          return Math.min(retries * 50, 500);
+          return Math.min(retries * 100, 1000);
         }
       }
     });
 
     client.on('error', (err) => {
-      logger.error('Redis Client Error:', err);
-      // Don't crash the app on Redis errors
+      // Silent Redis errors untuk production
+      if (process.env.NODE_ENV !== 'production') {
+        logger.error('Redis Client Error:', err.message);
+      }
     });
 
     client.on('connect', () => {
@@ -36,17 +37,24 @@ const connectRedis = async () => {
     });
 
     client.on('reconnecting', () => {
-      logger.info('Redis reconnecting...');
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info('Redis reconnecting...');
+      }
     });
 
     client.on('end', () => {
-      logger.info('Redis connection ended');
+      if (process.env.NODE_ENV !== 'production') {
+        logger.info('Redis connection ended');
+      }
     });
 
     await client.connect();
     return client;
   } catch (error) {
-    logger.error('Redis connection failed:', error);
+    // Silent Redis connection failures untuk production
+    if (process.env.NODE_ENV !== 'production') {
+      logger.error('Redis connection failed:', error.message);
+    }
     client = null;
     return null;
   }
@@ -55,7 +63,11 @@ const connectRedis = async () => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   if (client && client.isOpen) {
-    await client.quit();
+    try {
+      await client.quit();
+    } catch (error) {
+      // Silent shutdown errors
+    }
   }
 });
 

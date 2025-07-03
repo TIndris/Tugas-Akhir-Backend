@@ -5,11 +5,10 @@ import {
   createField, 
   updateField, 
   updateFieldJSON,
-  updateFieldHybrid,
   deleteField 
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
-import upload from '../middleware/upload.js'; // ← IMPORT UPLOAD MIDDLEWARE
+import upload from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -21,8 +20,8 @@ router.get('/:id', getField);
 router.use(authenticateToken, restrictTo('admin'));
 
 // Form-data routes dengan upload middleware
-router.post('/', upload.single('gambar'), createField); // ← RE-ENABLE WITH UPLOAD
-router.patch('/:id', upload.single('gambar'), updateField); // ← RE-ENABLE WITH UPLOAD
+router.post('/', upload.single('gambar'), createField);
+router.patch('/:id', upload.single('gambar'), updateField);
 
 // JSON routes (backup)
 router.patch('/:id/json', updateFieldJSON);

@@ -5,10 +5,10 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 
-// Import configurations - FIXED PATHS
+// Import configurations
 import connectDB from './config/db.js';
 import { connectRedis } from './config/redis.js'; 
-import logger from './config/logger.js';  // ← FIXED PATH
+import logger from './config/logger.js';
 import { initAdmin } from './config/initAdmin.js';
 
 // Import routes
@@ -31,7 +31,10 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP',
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => process.env.NODE_ENV === 'production'
+  skip: (req) => {
+    // Skip rate limiting untuk Vercel production
+    return process.env.NODE_ENV === 'production';
+  }
 });
 app.use(limiter);
 
@@ -43,7 +46,9 @@ app.use(mongoSanitize());
 
 // CORS
 app.use(cors({
-  origin: '*',
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://tugas-akhir-backend-ashy.vercel.app'] 
+    : '*',
   credentials: true
 }));
 
@@ -51,15 +56,17 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+// Logging middleware (simplified for production)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+    });
+    next();
   });
-  next();
-});
+}
 
 // Health check
 app.get('/', (req, res) => {
@@ -67,7 +74,8 @@ app.get('/', (req, res) => {
     status: 'success',
     message: 'Tugas Akhir Backend API is running!',
     version: '1.0.0',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -87,7 +95,11 @@ app.use((req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  logger.error(err.stack);
+  // Silent error logging untuk production
+  if (process.env.NODE_ENV !== 'production') {
+    logger.error(err.stack);
+  }
+  
   res.status(err.status || 500).json({
     status: 'error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
@@ -99,22 +111,25 @@ const initializeApp = async () => {
   try {
     // Connect to MongoDB
     await connectDB();
-    logger.info('MongoDB connected successfully');
     
-    // Connect to Redis (optional)
+    // Connect to Redis (optional, silent fail)
     try {
       await connectRedis();
-      logger.info('Redis connected successfully');
     } catch (redisError) {
-      logger.warn('Redis connection failed, continuing without cache');
+      // Silent Redis failure
+      if (process.env.NODE_ENV !== 'production') {
+        logger.warn('Redis connection failed, continuing without cache');
+      }
     }
     
-    // Initialize admin user
+    // Initialize admin user (silent fail)
     try {
       await initAdmin();
-      logger.info('Admin initialization completed');
     } catch (adminError) {
-      logger.warn('Admin initialization warning:', adminError.message);
+      // Silent admin init failure
+      if (process.env.NODE_ENV !== 'production') {
+        logger.warn('Admin initialization warning:', adminError.message);
+      }
     }
     
   } catch (error) {
@@ -126,5 +141,5 @@ const initializeApp = async () => {
 // Initialize app
 initializeApp();
 
-// Export for Vercel (don't listen in production)
+// Export for Vercel
 export default app;
