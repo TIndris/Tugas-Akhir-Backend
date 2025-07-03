@@ -26,19 +26,14 @@ const PORT = process.env.PORT || 5000;
 // Connect to MongoDB, Redis and initialize admin
 const initialize = async () => {
   try {
-    // Connect to MongoDB
     await connectDB();
+    await connectRedis();
     
-    // Connect to Redis
-    await connectRedis(); // Tambahkan ini
-    
-    // Initialize admin account
     const adminInitialized = await initAdmin();
     if (!adminInitialized) {
       throw new Error('Failed to initialize admin account');
     }
     
-    // Start server
     app.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
     });
@@ -51,29 +46,33 @@ const initialize = async () => {
 initialize();
 
 // Security middleware
-app.use(helmet()); // Add security headers
-app.use(mongoSanitize()); // Prevent NoSQL injection
+app.use(helmet());
+app.use(mongoSanitize());
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use('/api', limiter);
 
-// PASANG ROUTE UPLOAD SEBELUM express.json()
-app.use('/admin/fields', fieldRoutes);
-
-// Middleware lain yang tidak mengganggu multer
+// CORS
 app.use(cors({
-  origin: '*', // izinkan semua origin
+  origin: '*',
   credentials: true
 }));
-app.use(cookieParser()); // <-- PASTIKAN INI SEBELUM ROUTE YANG BUTUH TOKEN
 
-// Body parser SETELAH route upload
-app.use(express.json({ limit: '10kb' }));
-app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) }}));
+// Cookie parser
+app.use(cookieParser());
+
+// Body parser - SEBELUM routes
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Morgan logging
+app.use(morgan('combined', { 
+  stream: { write: message => logger.info(message.trim()) }
+}));
 
 // Session configuration
 app.use(session({
@@ -92,13 +91,13 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Routes
+// Routes - SETELAH body parser
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
 app.use('/fields', fieldRoutes);
 
-// 404 handler
+// Error handlers
 app.use((req, res, next) => {
   res.status(404).json({
     status: 'error',
@@ -106,7 +105,6 @@ app.use((req, res, next) => {
   });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   logger.error(err.stack);
   res.status(err.status || 500).json({

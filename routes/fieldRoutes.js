@@ -15,12 +15,12 @@ const router = express.Router();
 router.get('/', getAllFields);
 router.get('/:id', getField);
 
-// Middleware ini membatasi route di bawahnya hanya untuk admin
+// Middleware untuk admin only
 router.use(authenticateToken, restrictTo('admin'));
 
-// Admin-only routes
-router.post('/', upload.single('gambar'), createField);
-router.patch('/:id', updateField);
+// Admin routes dengan upload support
+router.post('/', upload.single('gambar'), createField);           // ← Upload required
+router.patch('/:id', upload.single('gambar'), updateField);       // ← Upload optional  
 router.delete('/:id', deleteField);
 
 export default router;
