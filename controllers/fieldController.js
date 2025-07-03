@@ -596,84 +596,25 @@ export const updateFieldJSON = async (req, res) => {
 
 export const updateFieldHybrid = async (req, res) => {
   try {
+    // Force JSON update for now
     const fieldId = req.params.id;
+    const { nama, jenis_lapangan, jam_buka, jam_tutup, harga, status } = req.body;
     
-    // Check content type
-    const isFormData = req.get('content-type')?.includes('multipart/form-data');
-    const isJSON = req.get('content-type')?.includes('application/json');
-    
-    let updateData = {};
-    let hasFile = false;
+    const updateData = {};
+    if (nama) updateData.nama = nama.trim();
+    if (jenis_lapangan) updateData.jenis_lapangan = jenis_lapangan.trim();
+    if (jam_buka) updateData.jam_buka = jam_buka.trim();
+    if (jam_tutup) updateData.jam_tutup = jam_tutup.trim();
+    if (harga) updateData.harga = parseInt(harga);
+    if (status) updateData.status = status.trim();
 
-    if (isJSON) {
-      // Handle JSON update (working)
-      const { nama, jenis_lapangan, jam_buka, jam_tutup, harga, status } = req.body;
-      
-      if (nama) updateData.nama = nama.trim();
-      if (jenis_lapangan) updateData.jenis_lapangan = jenis_lapangan.trim();
-      if (jam_buka) updateData.jam_buka = jam_buka.trim();
-      if (jam_tutup) updateData.jam_tutup = jam_tutup.trim();
-      if (harga) updateData.harga = parseInt(harga);
-      if (status) updateData.status = status.trim();
-      
-    } else if (isFormData) {
-      // Handle form-data dengan express-fileupload
-      
-      // req.body otomatis parsed oleh express-fileupload
-      const fields = req.body || {};
-      hasFile = req.file && req.file.path;
-      
-      // Check if we have any data
-      const hasFormFields = Object.keys(fields).length > 0;
-      
-      if (!hasFormFields && !hasFile) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Tidak ada data yang diterima dari form-data',
-          debug: {
-            fieldsReceived: Object.keys(fields),
-            hasFile: hasFile,
-            bodyType: typeof req.body,
-            contentType: req.get('content-type')
-          }
-        });
-      }
-
-      // Process form fields (express-fileupload sudah parse otomatis)
-      if (fields.nama) updateData.nama = String(fields.nama).trim();
-      if (fields.jenis_lapangan) updateData.jenis_lapangan = String(fields.jenis_lapangan).trim();
-      if (fields.jam_buka) updateData.jam_buka = String(fields.jam_buka).trim();
-      if (fields.jam_tutup) updateData.jam_tutup = String(fields.jam_tutup).trim();
-      if (fields.harga) {
-        const harga = parseInt(fields.harga);
-        if (!isNaN(harga) && harga > 0) {
-          updateData.harga = harga;
-        }
-      }
-      if (fields.status && ['tersedia', 'tidak tersedia'].includes(String(fields.status).trim())) {
-        updateData.status = String(fields.status).trim();
-      }
-
-      // Add uploaded image
-      if (hasFile) {
-        updateData.gambar = req.file.path;
-      }
-    } else {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Content-Type tidak didukung'
-      });
-    }
-
-    // Validate we have data to update
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data valid untuk diupdate'
+        message: 'Tidak ada data untuk diupdate'
       });
     }
 
-    // Validate field ID
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
@@ -681,55 +622,18 @@ export const updateFieldHybrid = async (req, res) => {
       });
     }
 
-    // Get current field
-    const currentField = await Field.findById(fieldId);
-    if (!currentField) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Lapangan tidak ditemukan'
-      });
-    }
-
-    // Check for duplicate name
-    if (updateData.nama && updateData.nama !== currentField.nama) {
-      const existingField = await Field.findOne({ 
-        nama: updateData.nama, 
-        _id: { $ne: fieldId } 
-      });
-      
-      if (existingField) {
-        return res.status(409).json({
-          status: 'error',
-          message: 'Nama lapangan sudah digunakan'
-        });
-      }
-    }
-
-    // Update field
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
       { new: true, runValidators: true }
     );
 
-    // Clear cache (with error handling)
-    try {
-      if (client && client.isOpen) {
-        await client.del('fields:all:all:all');
-        await client.del(`field:${fieldId}`);
-        await client.del('fields:available');
-      }
-    } catch (redisError) {
-      // Silent cache error - Redis issues tidak crash app
+    if (!field) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Lapangan tidak ditemukan'
+      });
     }
-
-    logger.info(`Field updated: ${field._id}`, {
-      role: req.user.role,
-      action: 'UPDATE_FIELD_HYBRID',
-      method: isJSON ? 'JSON' : 'FORM_DATA',
-      hasFile: hasFile,
-      updatedFields: Object.keys(updateData)
-    });
 
     res.status(200).json({
       status: 'success',
@@ -738,22 +642,6 @@ export const updateFieldHybrid = async (req, res) => {
     });
     
   } catch (error) {
-    logger.error(`Field update error: ${error.message}`);
-
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Data tidak valid'
-      });
-    }
-
-    if (error.code === 11000) {
-      return res.status(409).json({
-        status: 'error',
-        message: 'Nama lapangan sudah digunakan'
-      });
-    }
-
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat memperbarui lapangan'
