@@ -12,30 +12,14 @@ import parseFormData from '../middleware/formParser.js';
 
 const router = express.Router();
 
-// Public routes
 router.get('/', getAllFields);
 router.get('/:id', getField);
 
-// Admin middleware - apply to all routes below
 router.use(authenticateToken, restrictTo('admin'));
 
-// CREATE field (form-data dengan file REQUIRED)
-router.post('/', 
-  parseFormData, // ← Use manual parser instead of multer
-  createField
-);
-
-// UPDATE routes
-// 1. JSON update tanpa file
+router.post('/', parseFormData, createField);
 router.patch('/:id/json', updateFieldJSON);
-
-// 2. Form-data update dengan file optional
-router.patch('/:id', 
-  parseFormData, // ← Use manual parser instead of multer
-  updateField
-);
-
-// DELETE field
+router.patch('/:id', parseFormData, updateField);
 router.delete('/:id', deleteField);
 
 export default router;

@@ -117,54 +117,17 @@ export const createField = async (req, res) => {
 
 export const updateField = async (req, res) => {
   try {
-    console.log('=== UPDATE FIELD FORM-DATA DEBUG ===');
-    console.log('Field ID:', req.params.id);
-    console.log('User:', req.user?.name, req.user?.role);
-    console.log('Content-Type:', req.get('Content-Type'));
-    console.log('Method:', req.method);
-    console.log('Headers:', Object.keys(req.headers));
-    console.log('req.body after parsing:', req.body);
-    console.log('req.file after parsing:', req.file);
-    console.log('Body keys:', Object.keys(req.body || {}));
-    console.log('Body values:', Object.values(req.body || {}));
-    
     const fieldId = req.params.id;
-
-    // More detailed data checking
-    const hasData = req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0;
+    const hasData = req.body && Object.keys(req.body).length > 0;
     const hasFile = req.file && req.file.path;
     
-    console.log('=== DATA VALIDATION ===');
-    console.log('hasData:', hasData);
-    console.log('hasFile:', hasFile);
-    console.log('req.body type:', typeof req.body);
-    console.log('req.body keys count:', Object.keys(req.body || {}).length);
-    
-    // Allow update if we have either data OR file
     if (!hasData && !hasFile) {
-      console.log('❌ NO DATA RECEIVED');
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data yang diterima dari form-data',
-        debug: {
-          contentType: req.get('Content-Type'),
-          method: req.method,
-          hasBody: !!req.body,
-          bodyType: typeof req.body,
-          bodyKeys: Object.keys(req.body || {}),
-          bodyKeysCount: Object.keys(req.body || {}).length,
-          hasFile: !!req.file,
-          receivedData: req.body,
-          fileInfo: req.file ? {
-            fieldname: req.file.fieldname,
-            size: req.file.size,
-            mimetype: req.file.mimetype
-          } : null
-        }
+        message: 'Tidak ada data yang diterima dari form-data'
       });
     }
 
-    // Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
@@ -172,7 +135,6 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // Get current field
     const currentField = await Field.findById(fieldId);
     if (!currentField) {
       return res.status(404).json({
@@ -181,93 +143,39 @@ export const updateField = async (req, res) => {
       });
     }
 
-    console.log('✅ Current field found:', {
-      nama: currentField.nama,
-      jenis_lapangan: currentField.jenis_lapangan,
-      jam_buka: currentField.jam_buka,
-      jam_tutup: currentField.jam_tutup,
-      harga: currentField.harga,
-      status: currentField.status
-    });
-
-    // Prepare update data with detailed processing
     const updateData = {};
     
-    // Process each field with validation
-    if (req.body) {
-      console.log('=== PROCESSING FORM FIELDS ===');
-      
-      if (req.body.nama) {
-        const nama = req.body.nama.toString().trim();
-        if (nama.length > 0) {
-          updateData.nama = nama;
-          console.log('✅ nama:', nama);
-        }
-      }
-      
-      if (req.body.jenis_lapangan) {
-        const jenis = req.body.jenis_lapangan.toString().trim();
-        if (jenis.length > 0) {
-          updateData.jenis_lapangan = jenis;
-          console.log('✅ jenis_lapangan:', jenis);
-        }
-      }
-      
-      if (req.body.jam_buka) {
-        const jamBuka = req.body.jam_buka.toString().trim();
-        if (jamBuka.length > 0) {
-          updateData.jam_buka = jamBuka;
-          console.log('✅ jam_buka:', jamBuka);
-        }
-      }
-      
-      if (req.body.jam_tutup) {
-        const jamTutup = req.body.jam_tutup.toString().trim();
-        if (jamTutup.length > 0) {
-          updateData.jam_tutup = jamTutup;
-          console.log('✅ jam_tutup:', jamTutup);
-        }
-      }
-      
-      if (req.body.harga) {
-        const harga = req.body.harga.toString().trim();
-        if (harga.length > 0 && !isNaN(harga)) {
-          updateData.harga = parseInt(harga);
-          console.log('✅ harga:', parseInt(harga));
-        }
-      }
-      
-      if (req.body.status) {
-        const status = req.body.status.toString().trim();
-        if (status.length > 0) {
-          updateData.status = status;
-          console.log('✅ status:', status);
-        }
-      }
+    if (req.body.nama && req.body.nama.trim()) {
+      updateData.nama = req.body.nama.trim();
+    }
+    if (req.body.jenis_lapangan && req.body.jenis_lapangan.trim()) {
+      updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
+    }
+    if (req.body.jam_buka && req.body.jam_buka.trim()) {
+      updateData.jam_buka = req.body.jam_buka.trim();
+    }
+    if (req.body.jam_tutup && req.body.jam_tutup.trim()) {
+      updateData.jam_tutup = req.body.jam_tutup.trim();
+    }
+    if (req.body.harga && !isNaN(req.body.harga)) {
+      updateData.harga = parseInt(req.body.harga);
+    }
+    if (req.body.status && req.body.status.trim()) {
+      updateData.status = req.body.status.trim();
     }
     
-    // Add new image if uploaded
     if (req.file && req.file.path) {
       updateData.gambar = req.file.path;
-      console.log('✅ New image uploaded:', req.file.path);
     }
 
-    console.log('📝 Final update data to be applied:', updateData);
-
-    // Check if we have any data to update
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data valid untuk diupdate',
-        debug: {
-          receivedBody: req.body,
-          hasFile: !!req.file,
-          processedData: updateData
-        }
+        message: 'Tidak ada data valid untuk diupdate'
       });
     }
 
-    // Check for duplicate name
+    // Check duplicate name
     if (updateData.nama && updateData.nama !== currentField.nama) {
       const existingField = await Field.findOne({ 
         nama: updateData.nama, 
@@ -282,29 +190,11 @@ export const updateField = async (req, res) => {
       }
     }
 
-    console.log('🔄 About to update field with data:', updateData);
-
-    // Update field
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
-      {
-        new: true,
-        runValidators: true
-      }
+      { new: true, runValidators: true }
     );
-
-    console.log('✅ Field SUCCESSFULLY updated:', {
-      _id: field._id,
-      nama: field.nama,
-      jenis_lapangan: field.jenis_lapangan,
-      jam_buka: field.jam_buka,
-      jam_tutup: field.jam_tutup,
-      harga: field.harga,
-      status: field.status,
-      gambar: field.gambar,
-      updatedAt: field.updatedAt
-    });
 
     // Clear cache
     try {
@@ -312,17 +202,15 @@ export const updateField = async (req, res) => {
         await client.del('fields:all:all:all');
         await client.del(`field:${fieldId}`);
         await client.del('fields:available');
-        logger.info('Cache cleared after field update');
       }
     } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
+      // Silent fail for cache
     }
 
-    logger.info(`Field updated successfully: ${field._id}`, {
+    logger.info(`Field updated: ${field._id}`, {
       role: req.user.role,
-      action: 'UPDATE_FIELD_FORM_DATA',
-      hasFile: !!req.file,
-      updatedFields: Object.keys(updateData)
+      action: 'UPDATE_FIELD',
+      hasFile: !!req.file
     });
 
     res.status(200).json({
@@ -332,18 +220,11 @@ export const updateField = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('=== UPDATE FIELD ERROR ===');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
-    
     logger.error(`Field update error: ${error.message}`, {
       action: 'UPDATE_FIELD_ERROR',
-      fieldId: req.params.id,
-      body: req.body,
-      hasFile: !!req.file
+      fieldId: req.params.id
     });
 
-    // Handle validation errors
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,
@@ -353,19 +234,13 @@ export const updateField = async (req, res) => {
       return res.status(400).json({
         status: 'error',
         message: 'Data tidak valid',
-        error: {
-          code: 'VALIDATION_ERROR',
-          details: validationErrors
-        }
+        error: { details: validationErrors }
       });
     }
 
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat memperbarui lapangan',
-      error: {
-        message: error.message
-      }
+      message: 'Terjadi kesalahan saat memperbarui lapangan'
     });
   }
 };
