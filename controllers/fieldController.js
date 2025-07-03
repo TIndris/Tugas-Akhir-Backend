@@ -121,36 +121,28 @@ export const updateField = async (req, res) => {
     console.log('Field ID:', req.params.id);
     console.log('User:', req.user?.name, req.user?.role);
     console.log('Content-Type:', req.get('Content-Type'));
-    console.log('Method:', req.method);
-    console.log('req.body after multer:', req.body);
-    console.log('req.file after multer:', req.file);
+    console.log('req.body after manual parsing:', req.body);
+    console.log('req.file after manual parsing:', req.file);
     console.log('Body keys:', Object.keys(req.body || {}));
-    console.log('Body type:', typeof req.body);
-    console.log('Raw headers:', req.headers);
     
     const fieldId = req.params.id;
 
-    // More lenient data checking
+    // Check if manual parser got the data
     const hasData = req.body && Object.keys(req.body).length > 0;
     const hasFile = req.file;
     
     console.log('Data check - hasData:', hasData, 'hasFile:', hasFile);
     
-    // If no data AND no file, return error
     if (!hasData && !hasFile) {
-      console.log('❌ No data received from multer');
       return res.status(400).json({
         status: 'error',
         message: 'Tidak ada data yang diterima dari form-data',
         debug: {
           contentType: req.get('Content-Type'),
-          method: req.method,
           hasBody: !!req.body,
           bodyKeys: Object.keys(req.body || {}),
-          bodyType: typeof req.body,
           hasFile: !!req.file,
-          receivedData: req.body,
-          headers: req.headers
+          receivedData: req.body
         }
       });
     }
@@ -181,29 +173,26 @@ export const updateField = async (req, res) => {
       status: currentField.status
     });
 
-    // Prepare update data from form-data
+    // Prepare update data from manually parsed form-data
     const updateData = {};
     
-    // Process each field from req.body with more robust handling
-    if (req.body && typeof req.body === 'object') {
-      if (req.body.nama && req.body.nama.trim()) {
-        updateData.nama = req.body.nama.trim();
-      }
-      if (req.body.jenis_lapangan && req.body.jenis_lapangan.trim()) {
-        updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
-      }
-      if (req.body.jam_buka && req.body.jam_buka.trim()) {
-        updateData.jam_buka = req.body.jam_buka.trim();
-      }
-      if (req.body.jam_tutup && req.body.jam_tutup.trim()) {
-        updateData.jam_tutup = req.body.jam_tutup.trim();
-      }
-      if (req.body.harga && !isNaN(req.body.harga)) {
-        updateData.harga = parseInt(req.body.harga);
-      }
-      if (req.body.status && req.body.status.trim()) {
-        updateData.status = req.body.status.trim();
-      }
+    if (req.body.nama && req.body.nama.trim()) {
+      updateData.nama = req.body.nama.trim();
+    }
+    if (req.body.jenis_lapangan && req.body.jenis_lapangan.trim()) {
+      updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
+    }
+    if (req.body.jam_buka && req.body.jam_buka.trim()) {
+      updateData.jam_buka = req.body.jam_buka.trim();
+    }
+    if (req.body.jam_tutup && req.body.jam_tutup.trim()) {
+      updateData.jam_tutup = req.body.jam_tutup.trim();
+    }
+    if (req.body.harga && !isNaN(req.body.harga)) {
+      updateData.harga = parseInt(req.body.harga);
+    }
+    if (req.body.status && req.body.status.trim()) {
+      updateData.status = req.body.status.trim();
     }
     
     // Add new image if uploaded
@@ -218,15 +207,11 @@ export const updateField = async (req, res) => {
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data valid untuk diupdate',
-        debug: {
-          receivedBody: req.body,
-          hasFile: !!req.file
-        }
+        message: 'Tidak ada data valid untuk diupdate'
       });
     }
 
-    // Check for duplicate name (if nama is being updated)
+    // Check for duplicate name
     if (updateData.nama && updateData.nama !== currentField.nama) {
       const existingField = await Field.findOne({ 
         nama: updateData.nama, 
@@ -236,25 +221,20 @@ export const updateField = async (req, res) => {
       if (existingField) {
         return res.status(409).json({
           status: 'error',
-          message: 'Nama lapangan sudah digunakan',
-          error: {
-            code: 'DUPLICATE_FIELD_NAME',
-            field: 'nama',
-            value: updateData.nama
-          }
+          message: 'Nama lapangan sudah digunakan'
         });
       }
     }
 
     console.log('🔄 About to update field...');
 
-    // Update field with processed data
+    // Update field
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
       {
-        new: true, // Return updated document
-        runValidators: true // Validate the update
+        new: true,
+        runValidators: true
       }
     );
 
@@ -265,29 +245,20 @@ export const updateField = async (req, res) => {
       jam_tutup: field.jam_tutup,
       harga: field.harga,
       status: field.status,
-      gambar: field.gambar,
       updatedAt: field.updatedAt
     });
 
-    // Clear cache after update
+    // Clear cache
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
         await client.del(`field:${fieldId}`);
         await client.del('fields:available');
-        logger.info('Fields cache cleared after update');
       }
     } catch (redisError) {
       logger.warn('Redis cache clear error:', redisError);
     }
 
-    logger.info(`Field updated via form-data: ${field._id}`, {
-      role: req.user.role,
-      action: 'UPDATE_FIELD_FORM_DATA',
-      hasFile: !!req.file,
-      updatedFields: Object.keys(updateData)
-    });
-    
     res.status(200).json({
       status: 'success',
       message: 'Lapangan berhasil diperbarui',
@@ -295,55 +266,13 @@ export const updateField = async (req, res) => {
     });
     
   } catch (error) {
-    console.error('=== UPDATE FIELD FORM-DATA ERROR ===');
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
+    console.error('=== UPDATE FIELD ERROR ===');
+    console.error('Error:', error);
     
-    logger.error(`Field form-data update error: ${error.message}`, {
-      action: 'UPDATE_FIELD_FORM_DATA_ERROR',
-      fieldId: req.params.id,
-      body: req.body,
-      hasFile: !!req.file
-    });
-
-    // Handle MongoDB duplicate key error
-    if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern)[0];
-      const value = error.keyValue[field];
-      
-      return res.status(409).json({
-        status: 'error',
-        message: `${field === 'nama' ? 'Nama lapangan' : field} sudah digunakan`,
-        error: {
-          code: 'DUPLICATE_KEY_ERROR',
-          field: field,
-          value: value
-        }
-      });
-    }
-
-    // Handle validation errors
-    if (error.name === 'ValidationError') {
-      const validationErrors = Object.values(error.errors).map(err => ({
-        field: err.path,
-        message: err.message
-      }));
-
-      return res.status(400).json({
-        status: 'error',
-        message: 'Data tidak valid',
-        error: {
-          code: 'VALIDATION_ERROR',
-          details: validationErrors
-        }
-      });
-    }
-
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat memperbarui lapangan',
       error: {
-        code: 'INTERNAL_SERVER_ERROR',
         message: error.message
       }
     });
