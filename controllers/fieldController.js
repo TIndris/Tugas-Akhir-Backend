@@ -118,16 +118,36 @@ export const createField = async (req, res) => {
 export const updateField = async (req, res) => {
   try {
     const fieldId = req.params.id;
-    const hasData = req.body && Object.keys(req.body).length > 0;
+    
+    // More flexible data checking
+    const bodyExists = req.body && typeof req.body === 'object';
+    const hasTextData = bodyExists && Object.keys(req.body).length > 0;
     const hasFile = req.file && req.file.path;
     
-    if (!hasData && !hasFile) {
+    // Debug info (remove in production)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('=== UPDATE FIELD DEBUG ===');
+      console.log('Body exists:', bodyExists);
+      console.log('Body keys:', Object.keys(req.body || {}));
+      console.log('Has file:', hasFile);
+      console.log('Content-Type:', req.get('Content-Type'));
+    }
+    
+    // Allow update if we have either text data OR file
+    if (!hasTextData && !hasFile) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data yang diterima dari form-data'
+        message: 'Tidak ada data yang diterima dari form-data',
+        debug: {
+          contentType: req.get('Content-Type'),
+          bodyExists: bodyExists,
+          bodyKeys: Object.keys(req.body || {}),
+          hasFile: hasFile
+        }
       });
     }
 
+    // Validate field ID
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
@@ -135,6 +155,7 @@ export const updateField = async (req, res) => {
       });
     }
 
+    // Get current field
     const currentField = await Field.findById(fieldId);
     if (!currentField) {
       return res.status(404).json({
@@ -143,39 +164,63 @@ export const updateField = async (req, res) => {
       });
     }
 
+    // Prepare update data with more robust processing
     const updateData = {};
     
-    if (req.body.nama && req.body.nama.trim()) {
-      updateData.nama = req.body.nama.trim();
-    }
-    if (req.body.jenis_lapangan && req.body.jenis_lapangan.trim()) {
-      updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
-    }
-    if (req.body.jam_buka && req.body.jam_buka.trim()) {
-      updateData.jam_buka = req.body.jam_buka.trim();
-    }
-    if (req.body.jam_tutup && req.body.jam_tutup.trim()) {
-      updateData.jam_tutup = req.body.jam_tutup.trim();
-    }
-    if (req.body.harga && !isNaN(req.body.harga)) {
-      updateData.harga = parseInt(req.body.harga);
-    }
-    if (req.body.status && req.body.status.trim()) {
-      updateData.status = req.body.status.trim();
+    // Process text fields with better validation
+    if (hasTextData) {
+      Object.keys(req.body).forEach(key => {
+        const value = req.body[key];
+        
+        if (value !== undefined && value !== null && value !== '') {
+          const stringValue = String(value).trim();
+          
+          if (stringValue.length > 0) {
+            switch (key) {
+              case 'nama':
+                updateData.nama = stringValue;
+                break;
+              case 'jenis_lapangan':
+                updateData.jenis_lapangan = stringValue;
+                break;
+              case 'jam_buka':
+                updateData.jam_buka = stringValue;
+                break;
+              case 'jam_tutup':
+                updateData.jam_tutup = stringValue;
+                break;
+              case 'harga':
+                const parsedHarga = parseInt(stringValue);
+                if (!isNaN(parsedHarga) && parsedHarga > 0) {
+                  updateData.harga = parsedHarga;
+                }
+                break;
+              case 'status':
+                if (['tersedia', 'tidak tersedia'].includes(stringValue)) {
+                  updateData.status = stringValue;
+                }
+                break;
+            }
+          }
+        }
+      });
     }
     
-    if (req.file && req.file.path) {
+    // Add image if uploaded
+    if (hasFile) {
       updateData.gambar = req.file.path;
     }
 
+    // Check if we have any valid data to update
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data valid untuk diupdate'
+        message: 'Tidak ada data valid untuk diupdate',
+        received: req.body
       });
     }
 
-    // Check duplicate name
+    // Check for duplicate name if nama is being updated
     if (updateData.nama && updateData.nama !== currentField.nama) {
       const existingField = await Field.findOne({ 
         nama: updateData.nama, 
@@ -190,10 +235,14 @@ export const updateField = async (req, res) => {
       }
     }
 
+    // Update field
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
-      { new: true, runValidators: true }
+      { 
+        new: true, 
+        runValidators: true 
+      }
     );
 
     // Clear cache
@@ -210,7 +259,8 @@ export const updateField = async (req, res) => {
     logger.info(`Field updated: ${field._id}`, {
       role: req.user.role,
       action: 'UPDATE_FIELD',
-      hasFile: !!req.file
+      hasFile: !!req.file,
+      updatedFields: Object.keys(updateData)
     });
 
     res.status(200).json({
@@ -225,6 +275,7 @@ export const updateField = async (req, res) => {
       fieldId: req.params.id
     });
 
+    // Handle validation errors
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,
@@ -235,6 +286,14 @@ export const updateField = async (req, res) => {
         status: 'error',
         message: 'Data tidak valid',
         error: { details: validationErrors }
+      });
+    }
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Nama lapangan sudah digunakan'
       });
     }
 

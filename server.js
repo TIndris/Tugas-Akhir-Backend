@@ -66,12 +66,26 @@ app.use(cors({
 app.use(cookieParser());
 
 // Body parser - SEBELUM routes dengan limits yang lebih besar
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ 
+  limit: '10mb',
+  strict: false 
+}));
+
 app.use(express.urlencoded({ 
   extended: true, 
-  limit: '50mb',
-  parameterLimit: 100 
+  limit: '10mb',
+  parameterLimit: 1000,
+  type: 'application/x-www-form-urlencoded'
 }));
+
+// Add raw body parser untuk debugging
+app.use('/fields', (req, res, next) => {
+  if (req.get('content-type')?.includes('multipart/form-data')) {
+    // Skip express parsers for multipart, let multer handle it
+    return next();
+  }
+  next();
+});
 
 // Custom logging
 app.use((req, res, next) => {
