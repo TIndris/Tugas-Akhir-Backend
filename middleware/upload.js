@@ -15,25 +15,28 @@ const upload = multer({
   storage: storage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB
-    fieldSize: 2 * 1024 * 1024  // 2MB for text fields
-  },
-  fileFilter: (req, file, cb) => {
-    console.log('File received in multer:', file);
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'), false);
-    }
+    fieldSize: 2 * 1024 * 1024, // 2MB for text fields
+    fields: 10 // Allow up to 10 text fields
   }
 });
 
-// Debug middleware untuk cek multer parsing
+// Debug middleware untuk troubleshooting
 const debugMulter = (req, res, next) => {
-  console.log('=== MULTER DEBUG ===');
+  console.log('=== BEFORE MULTER ===');
+  console.log('Content-Type:', req.get('Content-Type'));
+  console.log('Content-Length:', req.get('Content-Length'));
   console.log('Headers:', req.headers);
-  console.log('Content-Type:', req.get('content-type'));
-  console.log('Body before multer:', req.body);
-  console.log('File before multer:', req.file);
+  
+  // Log after multer processes
+  const originalNext = next;
+  next = () => {
+    console.log('=== AFTER MULTER ===');
+    console.log('req.body:', req.body);
+    console.log('req.file:', req.file);
+    console.log('Body keys:', Object.keys(req.body || {}));
+    originalNext();
+  };
+  
   next();
 };
 

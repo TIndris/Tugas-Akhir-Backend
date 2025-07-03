@@ -69,12 +69,18 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Morgan logging
-app.use(morgan('combined', { 
-  stream: { write: message => logger.info(message.trim()) }
-}));
+// Custom logging
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const logMessage = `${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`;
+    logger.info(logMessage);
+  });
+  next();
+});
 
-// Session configuration
+// Session & Passport
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -86,12 +92,10 @@ app.use(session({
     sameSite: 'strict'
   }
 }));
-
-// Passport middleware
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Routes - SETELAH body parser
+// Routes - SETELAH semua middleware
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);

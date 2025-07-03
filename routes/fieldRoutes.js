@@ -4,7 +4,7 @@ import {
   getField, 
   createField, 
   updateField, 
-  updateFieldJSON, // ← TAMBAH IMPORT INI
+  updateFieldJSON,
   deleteField 
 } from '../controllers/fieldController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
@@ -16,35 +16,28 @@ const router = express.Router();
 router.get('/', getAllFields);
 router.get('/:id', getField);
 
-// Admin routes dengan proper middleware order
-// 1. JSON update tanpa file (lebih reliable)
-router.patch('/:id/json', 
-  authenticateToken, 
-  restrictTo('admin'),
-  updateFieldJSON // ← TAMBAH ROUTE INI
+// Admin middleware - apply to all routes below
+router.use(authenticateToken, restrictTo('admin'));
+
+// CREATE field (form-data dengan file REQUIRED)
+router.post('/', 
+  debugMulter,
+  upload.single('gambar'), 
+  createField
 );
 
-// 2. Form-data update dengan file
+// UPDATE routes
+// 1. JSON update tanpa file
+router.patch('/:id/json', updateFieldJSON);
+
+// 2. Form-data update dengan file optional (SAMA SEPERTI CREATE)
 router.patch('/:id', 
-  authenticateToken, 
-  restrictTo('admin'),
   debugMulter,
   upload.single('gambar'), 
   updateField
 );
 
-router.post('/', 
-  authenticateToken, 
-  restrictTo('admin'),
-  debugMulter,
-  upload.single('gambar'),
-  createField
-);
-
-router.delete('/:id', 
-  authenticateToken, 
-  restrictTo('admin'), 
-  deleteField
-);
+// DELETE field
+router.delete('/:id', deleteField);
 
 export default router;
