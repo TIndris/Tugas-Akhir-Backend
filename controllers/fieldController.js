@@ -7,6 +7,20 @@ export const createField = async (req, res) => {
     const { nama, jenis_lapangan, jam_buka, jam_tutup, harga } = req.body;
     const gambar = req.file ? req.file.path : undefined;
 
+    // Check if field name already exists
+    const existingField = await Field.findOne({ nama });
+    if (existingField) {
+      return res.status(409).json({
+        status: 'error',
+        message: 'Nama lapangan sudah digunakan',
+        error: {
+          code: 'DUPLICATE_FIELD_NAME',
+          field: 'nama',
+          value: nama
+        }
+      });
+    }
+
     const field = await Field.create({
       nama,
       jenis_lapangan,
@@ -20,7 +34,7 @@ export const createField = async (req, res) => {
     // Clear cache after creating new field
     try {
       if (client && client.isOpen) {
-        await client.del('fields:all');
+        await client.del('fields:all:all:all');
         await client.del('fields:available');
         logger.info('Fields cache cleared after create');
       }
@@ -28,14 +42,62 @@ export const createField = async (req, res) => {
       logger.warn('Redis cache clear error:', redisError);
     }
 
+    logger.info(`Field created: ${field._id}`, {
+      role: req.user.role,
+      action: 'CREATE_FIELD'
+    });
+
     res.status(201).json({
       status: 'success',
+      message: 'Lapangan berhasil dibuat',
       data: { field }
     });
   } catch (error) {
-    return res.status(400).json({
+    logger.error(`Field creation error: ${error.message}`, {
+      action: 'CREATE_FIELD_ERROR'
+    });
+
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      const value = error.keyValue[field];
+      
+      return res.status(409).json({
+        status: 'error',
+        message: `${field === 'nama' ? 'Nama lapangan' : field} sudah digunakan`,
+        error: {
+          code: 'DUPLICATE_KEY_ERROR',
+          field: field,
+          value: value
+        }
+      });
+    }
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => ({
+        field: err.path,
+        message: err.message
+      }));
+
+      return res.status(400).json({
+        status: 'error',
+        message: 'Data tidak valid',
+        error: {
+          code: 'VALIDATION_ERROR',
+          details: validationErrors
+        }
+      });
+    }
+
+    // Handle other errors
+    return res.status(500).json({
       status: 'error',
-      message: error.message || JSON.stringify(error) || error
+      message: 'Terjadi kesalahan internal server',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+      }
     });
   }
 };
@@ -93,7 +155,11 @@ export const getAllFields = async (req, res) => {
     logger.error('Error in getAllFields:', error);
     res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Terjadi kesalahan saat mengambil data lapangan',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+      }
     });
   }
 };
@@ -126,7 +192,12 @@ export const getField = async (req, res) => {
     if (!field) {
       return res.status(404).json({
         status: 'error',
-        message: 'Lapangan tidak ditemukan'
+        message: 'Lapangan tidak ditemukan',
+        error: {
+          code: 'FIELD_NOT_FOUND',
+          field: 'id',
+          value: fieldId
+        }
       });
     }
 
@@ -144,9 +215,14 @@ export const getField = async (req, res) => {
       data: { field }
     });
   } catch (error) {
+    logger.error('Error in getField:', error);
     res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Terjadi kesalahan saat mengambil data lapangan',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+      }
     });
   }
 };
@@ -154,18 +230,47 @@ export const getField = async (req, res) => {
 // Update field
 export const updateField = async (req, res) => {
   try {
+    const { nama } = req.body;
+    const fieldId = req.params.id;
+
+    // Check if new name already exists (exclude current field)
+    if (nama) {
+      const existingField = await Field.findOne({ 
+        nama, 
+        _id: { $ne: fieldId } 
+      });
+      
+      if (existingField) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Nama lapangan sudah digunakan',
+          error: {
+            code: 'DUPLICATE_FIELD_NAME',
+            field: 'nama',
+            value: nama
+          }
+        });
+      }
+    }
+
     const field = await Field.findByIdAndUpdate(
-      req.params.id,
+      fieldId,
       req.body,
       {
         new: true,
         runValidators: true
       }
     );
+    
     if (!field) {
       return res.status(404).json({
         status: 'error',
-        message: 'Lapangan tidak ditemukan'
+        message: 'Lapangan tidak ditemukan',
+        error: {
+          code: 'FIELD_NOT_FOUND',
+          field: 'id',
+          value: fieldId
+        }
       });
     }
 
@@ -173,7 +278,7 @@ export const updateField = async (req, res) => {
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
-        await client.del(`field:${req.params.id}`);
+        await client.del(`field:${fieldId}`);
         await client.del('fields:available');
         logger.info('Fields cache cleared after update');
       }
@@ -185,17 +290,57 @@ export const updateField = async (req, res) => {
       role: req.user.role,
       action: 'UPDATE_FIELD'
     });
+    
     res.status(200).json({
       status: 'success',
+      message: 'Lapangan berhasil diperbarui',
       data: { field }
     });
   } catch (error) {
     logger.error(`Field update error: ${error.message}`, {
       action: 'UPDATE_FIELD_ERROR'
     });
-    res.status(400).json({
+
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      const value = error.keyValue[field];
+      
+      return res.status(409).json({
+        status: 'error',
+        message: `${field === 'nama' ? 'Nama lapangan' : field} sudah digunakan`,
+        error: {
+          code: 'DUPLICATE_KEY_ERROR',
+          field: field,
+          value: value
+        }
+      });
+    }
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => ({
+        field: err.path,
+        message: err.message
+      }));
+
+      return res.status(400).json({
+        status: 'error',
+        message: 'Data tidak valid',
+        error: {
+          code: 'VALIDATION_ERROR',
+          details: validationErrors
+        }
+      });
+    }
+
+    res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Terjadi kesalahan saat memperbarui lapangan',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+      }
     });
   }
 };
@@ -203,11 +348,18 @@ export const updateField = async (req, res) => {
 // Delete field
 export const deleteField = async (req, res) => {
   try {
-    const field = await Field.findByIdAndDelete(req.params.id);
+    const fieldId = req.params.id;
+    const field = await Field.findByIdAndDelete(fieldId);
+    
     if (!field) {
       return res.status(404).json({
         status: 'error',
-        message: 'Lapangan tidak ditemukan'
+        message: 'Lapangan tidak ditemukan',
+        error: {
+          code: 'FIELD_NOT_FOUND',
+          field: 'id',
+          value: fieldId
+        }
       });
     }
 
@@ -215,7 +367,7 @@ export const deleteField = async (req, res) => {
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
-        await client.del(`field:${req.params.id}`);
+        await client.del(`field:${fieldId}`);
         await client.del('fields:available');
         logger.info('Fields cache cleared after delete');
       }
@@ -227,17 +379,24 @@ export const deleteField = async (req, res) => {
       role: req.user.role,
       action: 'DELETE_FIELD'
     });
-    res.status(204).json({
+    
+    res.status(200).json({
       status: 'success',
+      message: 'Lapangan berhasil dihapus',
       data: null
     });
   } catch (error) {
     logger.error(`Field deletion error: ${error.message}`, {
       action: 'DELETE_FIELD_ERROR'
     });
+    
     res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Terjadi kesalahan saat menghapus lapangan',
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+      }
     });
   }
 };
