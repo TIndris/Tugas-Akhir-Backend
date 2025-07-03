@@ -1,6 +1,16 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import moment from 'moment-timezone';
+import {
+  validateUserEmail,
+  validateUserName,
+  validateUserPassword,
+  validateUserRoleField,  // ← UPDATED nama import
+  validateAdminCashierCreation,
+  validateEmail,
+  validatePictureUrl,
+  USER_ROLES
+} from '../validators/userValidators.js';
 
 const userSchema = new mongoose.Schema({
   googleId: {
@@ -10,12 +20,18 @@ const userSchema = new mongoose.Schema({
   },
   name: {
     type: String,
-    required: true
+    required: [true, 'Nama harus diisi'],
+    trim: true
   },
   email: {
     type: String,
-    required: true,
-    unique: true
+    required: [true, 'Email harus diisi'],
+    unique: true,
+    lowercase: true,
+    validate: {
+      validator: validateEmail,
+      message: 'Format email tidak valid'
+    }
   },
   password: {
     type: String,
@@ -23,10 +39,19 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['customer', 'cashier', 'admin'],
+    enum: {
+      values: USER_ROLES,
+      message: 'Role tidak valid'
+    },
     default: 'customer'
   },
-  picture: String,
+  picture: {
+    type: String,
+    validate: {
+      validator: validatePictureUrl,
+      message: 'URL gambar tidak valid'
+    }
+  },
   isEmailVerified: {
     type: Boolean,
     default: false
@@ -69,6 +94,13 @@ userSchema.pre('save', async function(next) {
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
+
+// Pre-save validations
+userSchema.pre('save', validateUserEmail);
+userSchema.pre('save', validateUserName);
+userSchema.pre('save', validateUserPassword);
+userSchema.pre('save', validateUserRoleField);  // ← UPDATED nama function
+userSchema.pre('save', validateAdminCashierCreation);
 
 // Index untuk performance
 userSchema.index({ role: 1 });

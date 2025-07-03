@@ -1,5 +1,14 @@
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
+import {
+  validateBookingDateRange,
+  validateBookingTimeFormat,
+  validateBookingDurationRange,
+  validateFieldTypeForBooking,
+  validateBookingPrice,
+  BOOKING_STATUSES,
+  DURATION_LIMITS
+} from '../validators/bookingValidators.js';
 
 const bookingSchema = new mongoose.Schema({
   pelanggan: {
@@ -14,7 +23,11 @@ const bookingSchema = new mongoose.Schema({
   },
   jenis_lapangan: {
     type: String,
-    required: [true, 'Jenis lapangan harus diisi']
+    required: [true, 'Jenis lapangan harus diisi'],
+    validate: {
+      validator: validateFieldTypeForBooking,
+      message: 'Jenis lapangan tidak valid'
+    }
   },
   tanggal_booking: {
     type: Date,
@@ -27,15 +40,23 @@ const bookingSchema = new mongoose.Schema({
   durasi: {
     type: Number,
     required: [true, 'Durasi harus diisi'],
-    min: [1, 'Durasi minimal 1 jam']
+    min: [DURATION_LIMITS.MIN, `Durasi minimal ${DURATION_LIMITS.MIN} jam`],
+    max: [DURATION_LIMITS.MAX, `Durasi maksimal ${DURATION_LIMITS.MAX} jam`]
   },
   harga: {
     type: Number,
-    required: [true, 'Harga harus diisi']
+    required: [true, 'Harga harus diisi'],
+    validate: {
+      validator: validateBookingPrice,
+      message: 'Harga booking tidak valid'
+    }
   },
   status_pemesanan: {
     type: String,
-    enum: ['pending', 'confirmed', 'cancelled', 'completed'],
+    enum: {
+      values: BOOKING_STATUSES,
+      message: 'Status pemesanan tidak valid'
+    },
     default: 'pending'
   },
   kasir: {
@@ -63,6 +84,11 @@ bookingSchema.virtual('updatedAtWIB').get(function() {
 bookingSchema.virtual('tanggal_bookingWIB').get(function() {
   return moment(this.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY');
 });
+
+// Pre-save validations
+bookingSchema.pre('save', validateBookingDateRange);
+bookingSchema.pre('save', validateBookingTimeFormat);
+bookingSchema.pre('save', validateBookingDurationRange);
 
 // Middleware untuk mengecek ketersediaan lapangan
 bookingSchema.pre('save', async function(next) {
