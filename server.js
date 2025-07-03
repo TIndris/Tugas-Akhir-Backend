@@ -52,11 +52,7 @@ app.use(cors({
     'http://localhost:3000',                        // React default
     'http://localhost:5173',                        // Vite default
     'http://127.0.0.1:3000',                        // Alternative localhost
-                          // Alternative localhost
-    'http://127.0.0.1:5173',                        // Vite alternative
-    'http://10.168.115.250:5500',                   // ← ADD: Your IP address
-    /^http:\/\/192\.168\.\d+\.\d+:\d+$/,           // ← ADD: Local network IPs
-    /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/  
+    
     // Tambah domain frontend deploy nanti
     // 'https://tugas-akhir-frontend.vercel.app'
   ],
