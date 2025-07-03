@@ -5,100 +5,41 @@ const parseFormData = (req, res, next) => {
     return next();
   }
 
-  const boundary = req.get('content-type').split('boundary=')[1];
+  // Get boundary from content-type
+  const contentType = req.get('content-type');
+  const boundary = contentType.split('boundary=')[1];
+  
   if (!boundary) {
     req.body = {};
     return next();
   }
 
-  const chunks = [];
+  let body = '';
   
+  // Important: Set encoding to binary untuk file handling
+  req.setEncoding('binary');
+
   req.on('data', chunk => {
-    chunks.push(chunk);
+    body += chunk;
   });
 
   req.on('end', async () => {
     try {
-      const buffer = Buffer.concat(chunks);
-      const data = buffer.toString();
+      // Parse form data manually
+      const formData = parseMultipartData(body, boundary);
       
-      // Split by boundary
-      const parts = data.split(`--${boundary}`);
-      const fields = {};
-      let fileInfo = null;
-
-      for (const part of parts) {
-        if (!part.includes('Content-Disposition: form-data')) continue;
-
-        // Extract field name
-        const nameMatch = part.match(/name="([^"]+)"/);
-        if (!nameMatch) continue;
-        
-        const fieldName = nameMatch[1];
-
-        if (part.includes('filename=')) {
-          // Handle file
-          const filenameMatch = part.match(/filename="([^"]+)"/);
-          if (filenameMatch && filenameMatch[1]) {
-            const filename = filenameMatch[1];
-            
-            // Find binary content between headers and boundary
-            const headerEnd = part.indexOf('\r\n\r\n');
-            const contentEnd = part.lastIndexOf('\r\n--');
-            
-            if (headerEnd > 0 && contentEnd > headerEnd) {
-              const binaryContent = part.slice(headerEnd + 4, contentEnd);
-              const fileBuffer = Buffer.from(binaryContent, 'binary');
-              
-              if (fileBuffer.length > 100) { // Valid file size
-                fileInfo = {
-                  fieldname: fieldName,
-                  originalname: filename,
-                  buffer: fileBuffer
-                };
-              }
-            }
-          }
-        } else {
-          // Handle text field
-          const valueStart = part.indexOf('\r\n\r\n');
-          const valueEnd = part.lastIndexOf('\r\n');
-          
-          if (valueStart > 0 && valueEnd > valueStart) {
-            const value = part.slice(valueStart + 4, valueEnd).trim();
-            
-            // Only add non-empty values
-            if (value && value.length > 0) {
-              fields[fieldName] = value;
-            }
-          }
-        }
-      }
-
-      // CRITICAL: Set req.body dengan parsed fields
-      req.body = fields;
-
-      // Upload file jika ada
-      if (fileInfo && fileInfo.buffer.length > 0) {
+      // Set parsed data
+      req.body = formData.fields;
+      
+      // Handle file upload if present
+      if (formData.file) {
         try {
-          const uploadResult = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload_stream(
-              {
-                folder: 'lapangan',
-                resource_type: 'image'
-              },
-              (error, result) => {
-                if (error) reject(error);
-                else resolve(result);
-              }
-            ).end(fileInfo.buffer);
-          });
-
+          const uploadResult = await uploadToCloudinary(formData.file);
           req.file = {
-            fieldname: fileInfo.fieldname,
-            originalname: fileInfo.originalname,
+            fieldname: formData.file.fieldname,
+            originalname: formData.file.filename,
             path: uploadResult.secure_url,
-            size: fileInfo.buffer.length
+            size: formData.file.data.length
           };
         } catch (uploadError) {
           // Continue without file if upload fails
@@ -107,16 +48,81 @@ const parseFormData = (req, res, next) => {
 
       next();
     } catch (error) {
-      // Set empty body on error and continue
       req.body = {};
       next();
     }
   });
-
-  req.on('error', () => {
-    req.body = {};
-    next();
-  });
 };
+
+// Helper function to parse multipart data
+function parseMultipartData(body, boundary) {
+  const fields = {};
+  let file = null;
+
+  // Split by boundary
+  const parts = body.split('--' + boundary);
+
+  for (let part of parts) {
+    if (!part.includes('Content-Disposition')) continue;
+
+    // Extract name
+    const nameMatch = part.match(/name="([^"]+)"/);
+    if (!nameMatch) continue;
+    
+    const name = nameMatch[1];
+
+    if (part.includes('filename=')) {
+      // File field
+      const filenameMatch = part.match(/filename="([^"]+)"/);
+      if (filenameMatch) {
+        const filename = filenameMatch[1];
+        
+        // Find file data
+        const dataStart = part.indexOf('\r\n\r\n') + 4;
+        const dataEnd = part.lastIndexOf('\r\n');
+        
+        if (dataStart < dataEnd) {
+          const fileData = part.substring(dataStart, dataEnd);
+          if (fileData.length > 0) {
+            file = {
+              fieldname: name,
+              filename: filename,
+              data: Buffer.from(fileData, 'binary')
+            };
+          }
+        }
+      }
+    } else {
+      // Text field
+      const dataStart = part.indexOf('\r\n\r\n') + 4;
+      const dataEnd = part.lastIndexOf('\r\n');
+      
+      if (dataStart < dataEnd) {
+        const value = part.substring(dataStart, dataEnd).trim();
+        if (value) {
+          fields[name] = value;
+        }
+      }
+    }
+  }
+
+  return { fields, file };
+}
+
+// Helper function to upload to cloudinary
+function uploadToCloudinary(file) {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      {
+        folder: 'lapangan',
+        resource_type: 'image'
+      },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    ).end(file.data);
+  });
+}
 
 export default parseFormData;

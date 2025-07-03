@@ -606,7 +606,7 @@ export const updateFieldHybrid = async (req, res) => {
     let hasFile = false;
 
     if (isJSON) {
-      // Handle JSON update (working)
+      // Handle JSON update (sudah working)
       const { nama, jenis_lapangan, jam_buka, jam_tutup, harga, status } = req.body;
       
       if (nama) updateData.nama = nama.trim();
@@ -617,68 +617,38 @@ export const updateFieldHybrid = async (req, res) => {
       if (status) updateData.status = status.trim();
       
     } else if (isFormData) {
-      // Handle form-data update - IMPROVED
+      // SIMPLIFIED form-data handling
       
-      // Check if parser worked
-      const bodyExists = req.body && typeof req.body === 'object';
-      const hasFormFields = bodyExists && Object.keys(req.body).length > 0;
+      // Direct check untuk req.body dari parser
+      const parsedFields = req.body || {};
+      const fieldCount = Object.keys(parsedFields).length;
       hasFile = req.file && req.file.path;
       
-      // Debug untuk production
-      if (!hasFormFields && !hasFile) {
+      // Debug response untuk troubleshooting
+      if (fieldCount === 0 && !hasFile) {
         return res.status(400).json({
           status: 'error',
           message: 'Tidak ada data yang diterima dari form-data',
           debug: {
-            bodyType: typeof req.body,
-            bodyKeys: Object.keys(req.body || {}),
-            bodyKeyCount: Object.keys(req.body || {}).length,
-            hasFile: !!req.file,
-            contentType: req.get('content-type'),
-            bodyExists: bodyExists
+            parsedFieldCount: fieldCount,
+            parsedFields: parsedFields,
+            hasFile: hasFile,
+            reqBodyType: typeof req.body,
+            contentType: req.get('content-type')
           }
         });
       }
 
-      // Process form fields with better validation
-      if (hasFormFields) {
-        const formFields = req.body;
-        
-        // Process each field dengan explicit check
-        Object.keys(formFields).forEach(key => {
-          const value = formFields[key];
-          
-          if (value && typeof value === 'string' && value.trim().length > 0) {
-            const trimmedValue = value.trim();
-            
-            switch (key) {
-              case 'nama':
-                updateData.nama = trimmedValue;
-                break;
-              case 'jenis_lapangan':
-                updateData.jenis_lapangan = trimmedValue;
-                break;
-              case 'jam_buka':
-                updateData.jam_buka = trimmedValue;
-                break;
-              case 'jam_tutup':
-                updateData.jam_tutup = trimmedValue;
-                break;
-              case 'harga':
-                const hargaNum = parseInt(trimmedValue);
-                if (!isNaN(hargaNum) && hargaNum > 0) {
-                  updateData.harga = hargaNum;
-                }
-                break;
-              case 'status':
-                if (['tersedia', 'tidak tersedia'].includes(trimmedValue)) {
-                  updateData.status = trimmedValue;
-                }
-                break;
-            }
-          }
-        });
+      // Process parsed fields directly
+      if (parsedFields.nama) updateData.nama = parsedFields.nama;
+      if (parsedFields.jenis_lapangan) updateData.jenis_lapangan = parsedFields.jenis_lapangan;
+      if (parsedFields.jam_buka) updateData.jam_buka = parsedFields.jam_buka;
+      if (parsedFields.jam_tutup) updateData.jam_tutup = parsedFields.jam_tutup;
+      if (parsedFields.harga) {
+        const harga = parseInt(parsedFields.harga);
+        if (!isNaN(harga)) updateData.harga = harga;
       }
+      if (parsedFields.status) updateData.status = parsedFields.status;
 
       if (hasFile) {
         updateData.gambar = req.file.path;
@@ -694,13 +664,7 @@ export const updateFieldHybrid = async (req, res) => {
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data valid untuk diupdate',
-        received: {
-          isFormData,
-          isJSON,
-          bodyKeys: Object.keys(req.body || {}),
-          hasFile: !!req.file
-        }
+        message: 'Tidak ada data valid untuk diupdate'
       });
     }
 
@@ -754,14 +718,6 @@ export const updateFieldHybrid = async (req, res) => {
       // Silent cache error
     }
 
-    logger.info(`Field updated: ${field._id}`, {
-      role: req.user.role,
-      action: 'UPDATE_FIELD_HYBRID',
-      method: isJSON ? 'JSON' : 'FORM_DATA',
-      hasFile: hasFile,
-      updatedFields: Object.keys(updateData)
-    });
-
     res.status(200).json({
       status: 'success',
       message: 'Lapangan berhasil diperbarui',
@@ -774,8 +730,7 @@ export const updateFieldHybrid = async (req, res) => {
     if (error.name === 'ValidationError') {
       return res.status(400).json({
         status: 'error',
-        message: 'Data tidak valid',
-        error: { details: Object.values(error.errors).map(err => ({ field: err.path, message: err.message })) }
+        message: 'Data tidak valid'
       });
     }
 
