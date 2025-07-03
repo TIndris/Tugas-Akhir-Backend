@@ -119,15 +119,6 @@ export const updateField = async (req, res) => {
   try {
     const fieldId = req.params.id;
     
-    // Debug only in development
-    if (process.env.NODE_ENV === 'development') {
-      console.log('=== UPDATE FIELD DEBUG ===');
-      console.log('Content-Type:', req.get('Content-Type'));
-      console.log('Body:', req.body);
-      console.log('Body keys:', Object.keys(req.body || {}));
-      console.log('File:', req.file ? 'Present' : 'None');
-    }
-
     // Check if we have any data to process
     const hasFormData = req.body && Object.keys(req.body).length > 0;
     const hasFile = req.file && req.file.path;
@@ -135,13 +126,7 @@ export const updateField = async (req, res) => {
     if (!hasFormData && !hasFile) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data yang diterima dari form-data',
-        debug: {
-          contentType: req.get('Content-Type'),
-          bodyKeys: Object.keys(req.body || {}),
-          hasFile: !!req.file,
-          bodyType: typeof req.body
-        }
+        message: 'Tidak ada data yang diterima dari form-data'
       });
     }
 
@@ -165,38 +150,29 @@ export const updateField = async (req, res) => {
     // Process update data
     const updateData = {};
     
-    // Handle text fields
+    // Handle text fields dengan validasi yang lebih ketat
     if (hasFormData) {
-      const fieldMappings = {
-        nama: 'nama',
-        jenis_lapangan: 'jenis_lapangan', 
-        jam_buka: 'jam_buka',
-        jam_tutup: 'jam_tutup',
-        harga: 'harga',
-        status: 'status'
-      };
-
-      Object.entries(fieldMappings).forEach(([key, dbField]) => {
-        const value = req.body[key];
-        if (value !== undefined && value !== null && value !== '') {
-          const trimmedValue = String(value).trim();
-          
-          if (trimmedValue.length > 0) {
-            if (key === 'harga') {
-              const numValue = parseInt(trimmedValue);
-              if (!isNaN(numValue) && numValue > 0) {
-                updateData[dbField] = numValue;
-              }
-            } else if (key === 'status') {
-              if (['tersedia', 'tidak tersedia'].includes(trimmedValue)) {
-                updateData[dbField] = trimmedValue;
-              }
-            } else {
-              updateData[dbField] = trimmedValue;
-            }
-          }
+      if (req.body.nama && req.body.nama.trim()) {
+        updateData.nama = req.body.nama.trim();
+      }
+      if (req.body.jenis_lapangan && req.body.jenis_lapangan.trim()) {
+        updateData.jenis_lapangan = req.body.jenis_lapangan.trim();
+      }
+      if (req.body.jam_buka && req.body.jam_buka.trim()) {
+        updateData.jam_buka = req.body.jam_buka.trim();
+      }
+      if (req.body.jam_tutup && req.body.jam_tutup.trim()) {
+        updateData.jam_tutup = req.body.jam_tutup.trim();
+      }
+      if (req.body.harga) {
+        const hargaNum = parseInt(req.body.harga);
+        if (!isNaN(hargaNum) && hargaNum > 0) {
+          updateData.harga = hargaNum;
         }
-      });
+      }
+      if (req.body.status && ['tersedia', 'tidak tersedia'].includes(req.body.status.trim())) {
+        updateData.status = req.body.status.trim();
+      }
     }
     
     // Handle file upload
@@ -208,12 +184,7 @@ export const updateField = async (req, res) => {
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Tidak ada data valid untuk diupdate',
-        received: {
-          bodyKeys: Object.keys(req.body || {}),
-          bodyValues: Object.values(req.body || {}),
-          hasFile: !!req.file
-        }
+        message: 'Tidak ada data valid untuk diupdate'
       });
     }
 

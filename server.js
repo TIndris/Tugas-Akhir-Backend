@@ -65,11 +65,10 @@ app.use(cors({
 // Cookie parser
 app.use(cookieParser());
 
-// Body parser dengan konfigurasi optimal untuk Vercel
+// Body parser configuration
 app.use(express.json({ 
   limit: '10mb'
 }));
-
 app.use(express.urlencoded({ 
   extended: true, 
   limit: '10mb'
