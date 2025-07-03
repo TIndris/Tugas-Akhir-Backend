@@ -1,43 +1,49 @@
 import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
+import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import mongoSanitize from 'express-mongo-sanitize';
+
+// Import configurations
+import connectDB from './config/db.js';
+import { connectRedis } from './config/redis.js'; 
+import logger from './utils/logger.js';
+import { initAdmin } from './config/initAdmin.js';
+
+// Import routes
+import authRoutes from './routes/authRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
+import bookingRoutes from './routes/bookingRoutes.js';
+import fieldRoutes from './routes/fieldRoutes.js';
 
 dotenv.config();
 
 const app = express();
 
-// CRITICAL: Set trust proxy untuk Vercel
+// Trust proxy for Vercel
 app.set('trust proxy', 1);
 
-// Rate limiting dengan konfigurasi yang benar untuk production
+// Rate limiting dengan skip untuk production
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Terlalu banyak request dari IP ini',
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Too many requests from this IP',
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip trust proxy validation
-  skip: (req) => {
-    // Skip rate limiting untuk development
-    return process.env.NODE_ENV === 'development';
-  }
+  skip: (req) => process.env.NODE_ENV === 'production'
 });
-
-// Apply rate limiting
 app.use(limiter);
 
 // Security middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
+app.use(mongoSanitize());
 
-// CORS configuration
+// CORS
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://your-frontend-domain.vercel.app'] 
-    : '*',
+  origin: '*',
   credentials: true
 }));
 
@@ -45,48 +51,88 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Skip express body parsing untuk multipart
+// Logging middleware
 app.use((req, res, next) => {
-  if (req.get('content-type')?.includes('multipart/form-data')) {
-    return next();
-  }
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+  });
   next();
 });
 
-// Import routes dan middleware lainnya
-import authRoutes from './routes/authRoutes.js';
-import adminRoutes from './routes/adminRoutes.js';
-import bookingRoutes from './routes/bookingRoutes.js';
-import fieldRoutes from './routes/fieldRoutes.js';
-
-// Routes
-app.use('/auth', authRoutes);
-app.use('/admin/fields', fieldRoutes);
-app.use('/admin/bookings', bookingRoutes);
-
-// Error handlers
-app.use((req, res, next) => {
-  res.status(404).json({
-    status: 'error',
-    message: 'Route not found'
+// Health check
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'success',
+    message: 'Tugas Akhir Backend API is running!',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
   });
 });
 
+// API Routes
+app.use('/auth', authRoutes);
+app.use('/admin', adminRoutes);
+app.use('/bookings', bookingRoutes);
+app.use('/fields', fieldRoutes);
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    status: 'error',
+    message: 'API endpoint not found'
+  });
+});
+
+// Global error handler
 app.use((err, req, res, next) => {
   logger.error(err.stack);
   res.status(err.status || 500).json({
     status: 'error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong!'
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
   });
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received. Closing HTTP server');
-  app.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
-  });
-});
+// Database initialization
+const initializeApp = async () => {
+  try {
+    // Connect to MongoDB
+    await connectDB();
+    logger.info('MongoDB connected successfully');
+    
+    // Connect to Redis (optional)
+    try {
+      await connectRedis();
+      logger.info('Redis connected successfully');
+    } catch (redisError) {
+      logger.warn('Redis connection failed, continuing without cache');
+    }
+    
+    // Initialize admin user
+    try {
+      await initAdmin();
+      logger.info('Admin initialization completed');
+    } catch (adminError) {
+      logger.warn('Admin initialization warning:', adminError.message);
+    }
+    
+  } catch (error) {
+    logger.error('App initialization failed:', error);
+    process.exit(1);
+  }
+};
 
+// Initialize app
+initializeApp();
+
+// Start server (only in development)
+const PORT = process.env.PORT || 5000;
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT}`);
+  });
+}
+
+// Export for Vercel
 export default app;

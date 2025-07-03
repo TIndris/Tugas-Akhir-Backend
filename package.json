@@ -2,9 +2,11 @@
   "name": "tugas-akhir-backend",
   "version": "1.0.0",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "build": "echo 'No build step required'"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -29,5 +31,11 @@
     "passport-jwt": "^4.0.1",
     "redis": "^4.6.0",
     "winston": "^3.8.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
