@@ -1,7 +1,8 @@
 import express from 'express';
 import {
   createPayment,
-  verifyPayment,
+  approvePayment,    // ← NEW
+  rejectPayment,     // ← NEW
   getPendingPayments,
   getUserPayments,
   getPaymentById,
@@ -22,9 +23,10 @@ router.use(authenticateToken);
 router.post('/', upload.single('transfer_proof'), restrictTo('customer'), createPayment);
 router.get('/my-payments', restrictTo('customer'), getUserPayments);
 
-// Kasir routes - HANYA VERIFY/REJECT
+// Kasir routes - SIMPLE ENDPOINTS
 router.get('/pending', restrictTo('cashier', 'admin'), getPendingPayments);
-router.patch('/:paymentId/verify', restrictTo('cashier', 'admin'), verifyPayment); // ← KASIR ACTION
+router.patch('/:paymentId/approve', restrictTo('cashier', 'admin'), approvePayment); // ← APPROVE
+router.patch('/:paymentId/reject', restrictTo('cashier', 'admin'), rejectPayment);   // ← REJECT
 
 // Shared routes
 router.get('/:paymentId', getPaymentById);

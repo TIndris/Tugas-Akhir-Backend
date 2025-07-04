@@ -112,29 +112,16 @@ export const createPayment = async (req, res) => {
   }
 };
 
-// Simplify verifyPayment untuk kasir
-export const verifyPayment = async (req, res) => {
+// ✅ APPROVE PAYMENT - Simple endpoint
+export const approvePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const { action, notes } = req.body;
+    const { notes } = req.body; // Optional notes
 
-    // Simple validation - hanya verify atau reject
-    if (!action || !['verify', 'reject'].includes(action)) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Action harus "verify" atau "reject"',
-        example: {
-          verify: { action: "verify", notes: "Pembayaran valid" },
-          reject: { action: "reject", notes: "Bukti transfer tidak jelas" }
-        }
-      });
-    }
-
-    const payment = await PaymentService.verifyPayment(
+    const payment = await PaymentService.approvePayment(
       paymentId,
       req.user._id,
-      action,
-      notes || ''
+      notes || 'Pembayaran disetujui oleh kasir'
     );
 
     // Clear cache
@@ -149,26 +136,85 @@ export const verifyPayment = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      message: action === 'verify' 
-        ? '✅ Pembayaran disetujui' 
-        : '❌ Pembayaran ditolak',
+      message: '✅ Pembayaran berhasil disetujui',
       data: { 
         payment: {
           id: payment._id,
           status: payment.status,
           amount: payment.amount,
           payment_type: payment.payment_type_text,
-          verified_at: payment.verifiedAtWIB,
-          notes: payment.notes || payment.rejection_reason
+          approved_at: payment.verifiedAtWIB,
+          approved_by: req.user.name,
+          notes: payment.notes
         }
       }
     });
 
   } catch (error) {
-    logger.error(`Payment verification error: ${error.message}`, {
+    logger.error(`Payment approval error: ${error.message}`, {
       kasir: req.user?._id,
-      paymentId: req.params.paymentId,
-      action: req.body?.action
+      paymentId: req.params.paymentId
+    });
+
+    res.status(400).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+};
+
+// ❌ REJECT PAYMENT - Simple endpoint
+export const rejectPayment = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { reason } = req.body; // Optional rejection reason
+
+    if (!reason || reason.trim().length < 5) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Alasan penolakan harus diisi minimal 5 karakter',
+        example: {
+          reason: "Bukti transfer tidak jelas"
+        }
+      });
+    }
+
+    const payment = await PaymentService.rejectPayment(
+      paymentId,
+      req.user._id,
+      reason
+    );
+
+    // Clear cache
+    try {
+      if (client && client.isOpen) {
+        await client.del('payments:pending');
+        await client.del(`payments:user:${payment.user}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: '❌ Pembayaran ditolak',
+      data: { 
+        payment: {
+          id: payment._id,
+          status: payment.status,
+          amount: payment.amount,
+          payment_type: payment.payment_type_text,
+          rejected_at: payment.verifiedAtWIB,
+          rejected_by: req.user.name,
+          rejection_reason: payment.rejection_reason
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Payment rejection error: ${error.message}`, {
+      kasir: req.user?._id,
+      paymentId: req.params.paymentId
     });
 
     res.status(400).json({
