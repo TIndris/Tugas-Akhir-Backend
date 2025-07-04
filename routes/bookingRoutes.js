@@ -1,7 +1,6 @@
 import express from 'express';
 import { 
   createBooking,
-  confirmBooking,
   getAllBookings,
   getBooking,
   getMyBookings,
@@ -21,9 +20,8 @@ router.get('/my-bookings', restrictTo('customer'), getMyBookings);
 // Routes for admin/cashier
 router.get('/', restrictTo('admin', 'cashier'), getAllBookings);
 router.get('/:id', restrictTo('admin', 'cashier', 'customer'), getBooking);
-router.patch('/:id/confirm', restrictTo('cashier'), confirmBooking);
 
-// Add new route for getting available slots
+// Public route for getting available slots
 router.get('/available-slots', getAvailableSlots);
 
 export default router;

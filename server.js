@@ -106,11 +106,19 @@ app.get('/', (req, res) => {
         '/admin - Admin management routes', 
         '/fields - Field management routes',
         '/bookings - Booking management routes',
-        '/payments - Payment management routes'
+        '/payments - Payment management routes (includes booking confirmation)'
+      ],
+      kasir_workflow: [
+        'GET /payments/pending - View pending payments',
+        'PATCH /payments/:id/approve - Approve payment & auto-confirm booking',
+        'PATCH /payments/:id/reject - Reject payment & reset booking'
       ]
     }
   });
 });
+
+// Handle favicon requests silently
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 // API Routes
 app.use('/auth', authRoutes);

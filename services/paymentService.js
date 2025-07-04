@@ -117,7 +117,7 @@ export class PaymentService {
   }
 
   /**
-   * ✅ APPROVE PAYMENT
+   * ✅ APPROVE PAYMENT - Enhanced dengan auto booking confirmation
    */
   static async approvePayment(paymentId, kasirId, notes = '') {
     const payment = await Payment.findById(paymentId).populate('booking');
@@ -136,12 +136,20 @@ export class PaymentService {
     payment.verified_at = new Date();
     payment.notes = notes;
 
-    // Update booking
+    // ✅ AUTO BOOKING CONFIRMATION - Enhanced logic
     const booking = payment.booking;
+    
+    // Set booking status to confirmed (regardless of payment type)
     booking.status_pemesanan = 'confirmed';
-    booking.payment_status = payment.payment_type === this.PAYMENT_TYPES.FULL 
-      ? 'fully_paid' 
-      : 'dp_confirmed';
+    
+    // Set payment status based on payment type
+    if (payment.payment_type === this.PAYMENT_TYPES.FULL) {
+      booking.payment_status = 'fully_paid';
+    } else {
+      booking.payment_status = 'dp_confirmed';
+    }
+    
+    // Set kasir info for booking confirmation
     booking.kasir = kasirId;
     booking.konfirmasi_at = new Date();
 
@@ -149,18 +157,20 @@ export class PaymentService {
     await payment.save();
     await booking.save();
 
-    logger.info(`Payment APPROVED: ${payment._id}`, {
+    logger.info(`Payment APPROVED & Booking CONFIRMED: ${payment._id}`, {
       kasir: kasirId,
       customer: payment.user,
+      booking: booking._id,
       amount: payment.amount,
-      type: payment.payment_type
+      type: payment.payment_type,
+      action: 'APPROVE_PAYMENT_AUTO_CONFIRM_BOOKING'
     });
 
     return payment;
   }
 
   /**
-   * ❌ REJECT PAYMENT
+   * ❌ REJECT PAYMENT - Enhanced dengan booking status reset
    */
   static async rejectPayment(paymentId, kasirId, reason) {
     const payment = await Payment.findById(paymentId).populate('booking');
@@ -179,19 +189,25 @@ export class PaymentService {
     payment.verified_at = new Date();
     payment.rejection_reason = reason;
 
-    // Reset booking
+    // ✅ RESET BOOKING STATUS - Enhanced logic
     const booking = payment.booking;
-    booking.status_pemesanan = 'pending';
-    booking.payment_status = 'no_payment';
+    booking.status_pemesanan = 'pending';  // Reset to pending
+    booking.payment_status = 'no_payment'; // Reset payment status
+    
+    // Clear kasir info since booking is back to pending
+    booking.kasir = undefined;
+    booking.konfirmasi_at = undefined;
 
     // Save changes
     await payment.save();
     await booking.save();
 
-    logger.info(`Payment REJECTED: ${payment._id}`, {
+    logger.info(`Payment REJECTED & Booking RESET: ${payment._id}`, {
       kasir: kasirId,
       customer: payment.user,
-      reason: reason
+      booking: booking._id,
+      reason: reason,
+      action: 'REJECT_PAYMENT_RESET_BOOKING'
     });
 
     return payment;

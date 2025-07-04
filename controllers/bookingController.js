@@ -1,7 +1,7 @@
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
 import { client } from '../config/redis.js';
-import logger from '../config/logger.js';  // ← FIXED PATH
+import logger from '../config/logger.js';
 
 // Create booking dengan cache invalidation
 export const createBooking = async (req, res) => {
@@ -121,8 +121,8 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// Konfirmasi booking (untuk kasir)
-export const confirmBooking = async (req, res) => {
+// Keep confirmBooking function but DON'T export (untuk backward compatibility)
+const confirmBooking = async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id);
     
