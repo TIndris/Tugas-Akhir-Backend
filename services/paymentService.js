@@ -117,9 +117,9 @@ export class PaymentService {
   }
 
   /**
-   * Verify payment (for cashier/admin)
+   * Verify atau Reject payment (untuk kasir)
    */
-  static async verifyPayment(paymentId, verifierId, action, notes = '') {
+  static async verifyPayment(paymentId, kasirId, action, notes = '') {
     const payment = await Payment.findById(paymentId).populate('booking');
     
     if (!payment) {
@@ -130,54 +130,55 @@ export class PaymentService {
       throw new Error('Payment sudah diproses sebelumnya');
     }
 
-    if (action === 'verify') {
-      payment.status = this.PAYMENT_STATUS.VERIFIED;
-      payment.verified_by = verifierId;
-      payment.verified_at = new Date();
-      payment.notes = notes || 'Pembayaran telah diverifikasi';
+    const booking = payment.booking;
 
-      const booking = payment.booking;
-      if (payment.payment_type === this.PAYMENT_TYPES.FULL) {
-        booking.status_pemesanan = 'confirmed';   // ← Use existing status
-        booking.payment_status = 'fully_paid';
-      } else {
-        booking.status_pemesanan = 'confirmed';   // ← Use existing status  
-        booking.payment_status = 'dp_confirmed';
-      }
-      booking.kasir = verifierId;
+    if (action === 'verify') {
+      // ✅ APPROVE PAYMENT
+      payment.status = this.PAYMENT_STATUS.VERIFIED;
+      payment.verified_by = kasirId;
+      payment.verified_at = new Date();
+      payment.notes = notes || 'Pembayaran disetujui oleh kasir';
+
+      // Update booking status
+      booking.status_pemesanan = 'confirmed';
+      booking.payment_status = payment.payment_type === this.PAYMENT_TYPES.FULL 
+        ? 'fully_paid' 
+        : 'dp_confirmed';
+      booking.kasir = kasirId;
       booking.konfirmasi_at = new Date();
-      await booking.save();
-      
-      logger.info(`Payment verified: ${payment._id}`, {
-        verifier: verifierId,
-        booking: payment.booking._id,
+
+      logger.info(`Payment APPROVED: ${payment._id}`, {
+        kasir: kasirId,
+        customer: payment.user,
         amount: payment.amount,
-        action: 'VERIFY_PAYMENT'
+        type: payment.payment_type
       });
 
     } else if (action === 'reject') {
+      // ❌ REJECT PAYMENT
       payment.status = this.PAYMENT_STATUS.REJECTED;
-      payment.verified_by = verifierId;
+      payment.verified_by = kasirId;
       payment.verified_at = new Date();
       payment.rejection_reason = notes || 'Bukti transfer tidak valid';
 
-      // Update booking status back to pending
-      const booking = payment.booking;
+      // Reset booking ke status awal
       booking.status_pemesanan = 'pending';
-      await booking.save();
+      booking.payment_status = 'no_payment';
 
-      logger.info(`Payment rejected: ${payment._id}`, {
-        verifier: verifierId,
-        booking: payment.booking._id,
-        reason: notes,
-        action: 'REJECT_PAYMENT'
+      logger.info(`Payment REJECTED: ${payment._id}`, {
+        kasir: kasirId,
+        customer: payment.user,
+        reason: notes
       });
 
     } else {
-      throw new Error('Action harus verify atau reject');
+      throw new Error('Action harus "verify" atau "reject"');
     }
 
+    // Save changes
     await payment.save();
+    await booking.save();
+
     return payment;
   }
 

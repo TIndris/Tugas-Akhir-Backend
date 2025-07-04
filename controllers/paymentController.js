@@ -112,15 +112,21 @@ export const createPayment = async (req, res) => {
   }
 };
 
+// Simplify verifyPayment untuk kasir
 export const verifyPayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const { action, notes } = req.body;
 
-    if (!['verify', 'reject'].includes(action)) {
+    // Simple validation - hanya verify atau reject
+    if (!action || !['verify', 'reject'].includes(action)) {
       return res.status(400).json({
         status: 'error',
-        message: 'Action harus verify atau reject'
+        message: 'Action harus "verify" atau "reject"',
+        example: {
+          verify: { action: "verify", notes: "Pembayaran valid" },
+          reject: { action: "reject", notes: "Bukti transfer tidak jelas" }
+        }
       });
     }
 
@@ -128,10 +134,10 @@ export const verifyPayment = async (req, res) => {
       paymentId,
       req.user._id,
       action,
-      notes
+      notes || ''
     );
 
-    // Clear caches
+    // Clear cache
     try {
       if (client && client.isOpen) {
         await client.del('payments:pending');
@@ -144,16 +150,25 @@ export const verifyPayment = async (req, res) => {
     res.status(200).json({
       status: 'success',
       message: action === 'verify' 
-        ? 'Pembayaran berhasil diverifikasi'
-        : 'Pembayaran ditolak',
-      data: { payment }
+        ? '✅ Pembayaran disetujui' 
+        : '❌ Pembayaran ditolak',
+      data: { 
+        payment: {
+          id: payment._id,
+          status: payment.status,
+          amount: payment.amount,
+          payment_type: payment.payment_type_text,
+          verified_at: payment.verifiedAtWIB,
+          notes: payment.notes || payment.rejection_reason
+        }
+      }
     });
 
   } catch (error) {
     logger.error(`Payment verification error: ${error.message}`, {
-      verifier: req.user?._id,
+      kasir: req.user?._id,
       paymentId: req.params.paymentId,
-      action: 'VERIFY_PAYMENT_ERROR'
+      action: req.body?.action
     });
 
     res.status(400).json({

@@ -12,7 +12,7 @@ import upload from '../middleware/upload.js';
 
 const router = express.Router();
 
-// Public route - get bank info
+// Public route
 router.get('/bank-info', getBankInfo);
 
 // Protect all other routes
@@ -22,11 +22,11 @@ router.use(authenticateToken);
 router.post('/', upload.single('transfer_proof'), restrictTo('customer'), createPayment);
 router.get('/my-payments', restrictTo('customer'), getUserPayments);
 
-// Admin/Cashier routes
-router.get('/pending', restrictTo('admin', 'cashier'), getPendingPayments);
-router.patch('/:paymentId/verify', restrictTo('admin', 'cashier'), verifyPayment);
+// Kasir routes - HANYA VERIFY/REJECT
+router.get('/pending', restrictTo('cashier', 'admin'), getPendingPayments);
+router.patch('/:paymentId/verify', restrictTo('cashier', 'admin'), verifyPayment); // ← KASIR ACTION
 
-// Shared routes (with authorization check inside controller)
+// Shared routes
 router.get('/:paymentId', getPaymentById);
 
 export default router;
