@@ -17,6 +17,7 @@ import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import bookingRoutes from './routes/bookingRoutes.js';
 import fieldRoutes from './routes/fieldRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
 
 dotenv.config();
 
@@ -104,7 +105,8 @@ app.get('/', (req, res) => {
         '/auth - Authentication routes',
         '/admin - Admin management routes', 
         '/fields - Field management routes',
-        '/bookings - Booking management routes'
+        '/bookings - Booking management routes',
+        '/payments - Payment management routes'
       ]
     }
   });
@@ -115,6 +117,7 @@ app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
 app.use('/fields', fieldRoutes);
+app.use('/payments', paymentRoutes); 
 
 // 404 handler
 app.use((req, res) => {

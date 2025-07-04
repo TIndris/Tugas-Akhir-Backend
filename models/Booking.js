@@ -65,6 +65,22 @@ const bookingSchema = new mongoose.Schema({
   },
   konfirmasi_at: {
     type: Date
+  },
+  // Payment integration fields
+  payment_status: {
+    type: String,
+    enum: {
+      values: ['no_payment', 'pending_payment', 'dp_confirmed', 'fully_paid'],
+      message: 'Status pembayaran tidak valid'
+    },
+    default: 'no_payment'
+  },
+  payment_deadline: {
+    type: Date,
+    default: function() {
+      // Payment deadline 24 hours after booking creation
+      return new Date(Date.now() + 24 * 60 * 60 * 1000);
+    }
   }
 }, {
   timestamps: true,
@@ -83,6 +99,17 @@ bookingSchema.virtual('updatedAtWIB').get(function() {
 
 bookingSchema.virtual('tanggal_bookingWIB').get(function() {
   return moment(this.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY');
+});
+
+// Add virtual for payment status text
+bookingSchema.virtual('payment_status_text').get(function() {
+  const statusMap = {
+    'no_payment': 'Belum Bayar',
+    'pending_payment': 'Menunggu Verifikasi Pembayaran',
+    'dp_confirmed': 'DP Terkonfirmasi',
+    'fully_paid': 'Lunas'
+  };
+  return statusMap[this.payment_status];
 });
 
 // Pre-save validations
