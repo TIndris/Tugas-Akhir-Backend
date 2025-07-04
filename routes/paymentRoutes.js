@@ -1,8 +1,8 @@
 import express from 'express';
 import {
   createPayment,
-  approvePayment,    // ← NEW
-  rejectPayment,     // ← NEW
+  approvePayment,
+  rejectPayment,
   getPendingPayments,
   getUserPayments,
   getPaymentById,
@@ -23,10 +23,13 @@ router.use(authenticateToken);
 router.post('/', upload.single('transfer_proof'), restrictTo('customer'), createPayment);
 router.get('/my-payments', restrictTo('customer'), getUserPayments);
 
-// Kasir routes - SIMPLE ENDPOINTS
+// Kasir routes - Check parameter names
 router.get('/pending', restrictTo('cashier', 'admin'), getPendingPayments);
-router.patch('/:paymentId/approve', restrictTo('cashier', 'admin'), approvePayment); // ← APPROVE
-router.patch('/:paymentId/reject', restrictTo('cashier', 'admin'), rejectPayment);   // ← REJECT
+router.patch('/:paymentId/approve', restrictTo('cashier', 'admin'), approvePayment);
+router.patch('/:paymentId/reject', restrictTo('cashier', 'admin'), rejectPayment);  // ← paymentId
+
+// OR if using different parameter name:
+// router.patch('/:id/reject', restrictTo('cashier', 'admin'), rejectPayment);  // ← id
 
 // Shared routes
 router.get('/:paymentId', getPaymentById);

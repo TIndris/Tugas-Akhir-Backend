@@ -1,4 +1,6 @@
 import { PaymentService } from '../services/paymentService.js';
+import Payment from '../models/Payment.js';  // ← ADD THIS IMPORT
+import Booking from '../models/Booking.js';  // ← ADD THIS IMPORT (if not exists)
 import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
 
@@ -163,13 +165,14 @@ export const approvePayment = async (req, res) => {
   }
 };
 
-// ❌ REJECT PAYMENT - Simple endpoint
+// ❌ REJECT PAYMENT - Fixed version
 export const rejectPayment = async (req, res) => {
   try {
     console.log('=== PAYMENT REJECTION DEBUG ===');
-    console.log('Payment ID:', req.params.id);
+    console.log('Payment ID:', req.params.paymentId || req.params.id);
     console.log('Request body:', req.body);
 
+    const paymentId = req.params.paymentId || req.params.id;
     const { reason, rejection_reason } = req.body;
     const finalReason = reason || rejection_reason;
 
@@ -180,68 +183,99 @@ export const rejectPayment = async (req, res) => {
       });
     }
 
-    // Find payment with booking populated
-    const payment = await Payment.findById(req.params.id).populate('booking');
-    
-    if (!payment) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Payment tidak ditemukan'
-      });
-    }
+    // Use PaymentService if available, otherwise direct logic
+    if (PaymentService && PaymentService.rejectPayment) {
+      // ✅ Use Service (Recommended)
+      const payment = await PaymentService.rejectPayment(
+        paymentId,
+        req.user._id,
+        finalReason.trim()
+      );
 
-    if (payment.status !== 'pending') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Payment sudah diproses sebelumnya',
-        current_status: payment.status
-      });
-    }
-
-    // ✅ COMPLETE RESET - Update payment
-    payment.status = 'rejected';
-    payment.verified_by = req.user._id;
-    payment.verified_at = new Date();
-    payment.rejection_reason = finalReason.trim();
-
-    // ✅ COMPLETE RESET - Reset booking to initial state
-    const booking = payment.booking;
-    booking.status_pemesanan = 'pending';        // ← Reset to pending
-    booking.payment_status = 'no_payment';       // ← Reset payment status
-    booking.kasir = undefined;                   // ← Remove kasir
-    booking.konfirmasi_at = undefined;           // ← Remove confirmation date
-
-    // Save both documents
-    await payment.save();
-    await booking.save();
-
-    console.log('Payment rejected and booking reset:', {
-      payment_id: payment._id,
-      booking_id: booking._id,
-      booking_status: booking.status_pemesanan,
-      payment_status: booking.payment_status,
-      kasir: booking.kasir
-    });
-
-    res.status(200).json({
-      status: 'success',
-      message: '❌ Pembayaran ditolak dan booking direset',
-      data: {
-        payment: {
-          id: payment._id,
-          status: 'Ditolak',
-          rejection_reason: payment.rejection_reason,
-          rejected_by: req.user.name,
-          rejected_at: payment.verifiedAtWIB
-        },
-        booking: {
-          id: booking._id,
-          status: 'pending',
-          payment_status: 'no_payment',
-          kasir: null
+      // Clear cache
+      try {
+        if (client && client.isOpen) {
+          await client.del('payments:pending');
+          await client.del(`payments:user:${payment.user}`);
         }
+      } catch (redisError) {
+        logger.warn('Redis cache clear error:', redisError);
       }
-    });
+
+      res.status(200).json({
+        status: 'success',
+        message: '❌ Pembayaran ditolak dan booking direset',
+        data: {
+          payment: {
+            id: payment._id,
+            status: 'Ditolak',
+            rejection_reason: payment.rejection_reason,
+            rejected_by: req.user.name,
+            rejected_at: payment.verifiedAtWIB
+          }
+        }
+      });
+
+    } else {
+      // ✅ Fallback Direct Logic (with proper imports)
+      const payment = await Payment.findById(paymentId).populate('booking');
+      
+      if (!payment) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Payment tidak ditemukan'
+        });
+      }
+
+      if (payment.status !== 'pending') {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Payment sudah diproses sebelumnya',
+          current_status: payment.status
+        });
+      }
+
+      // Update payment
+      payment.status = 'rejected';
+      payment.verified_by = req.user._id;
+      payment.verified_at = new Date();
+      payment.rejection_reason = finalReason.trim();
+
+      // Reset booking
+      const booking = payment.booking;
+      booking.status_pemesanan = 'pending';
+      booking.payment_status = 'no_payment';
+      booking.kasir = undefined;
+      booking.konfirmasi_at = undefined;
+
+      // Save both documents
+      await payment.save();
+      await booking.save();
+
+      // Clear cache
+      try {
+        if (client && client.isOpen) {
+          await client.del('payments:pending');
+          await client.del(`payments:user:${payment.user}`);
+        }
+      } catch (redisError) {
+        logger.warn('Redis cache clear error:', redisError);
+      }
+
+      res.status(200).json({
+        status: 'success',
+        message: '❌ Pembayaran ditolak dan booking direset',
+        data: {
+          payment: {
+            id: payment._id,
+            status: 'Ditolak',
+            rejection_reason: payment.rejection_reason,
+            rejected_by: req.user.name,
+            rejected_at: payment.verifiedAtWIB
+          }
+        }
+      });
+    }
 
   } catch (error) {
     console.error('Payment rejection error:', error);

@@ -1,5 +1,6 @@
 import Payment from '../models/Payment.js';
 import Booking from '../models/Booking.js';
+import mongoose from 'mongoose';  // ← ADD THIS for transactions
 import logger from '../config/logger.js';
 import {
   validatePaymentAmountLogic,
