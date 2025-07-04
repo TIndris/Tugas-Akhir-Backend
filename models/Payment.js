@@ -13,12 +13,12 @@ const paymentSchema = new mongoose.Schema({
   booking: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Booking',
-    required: [true, 'Booking ID harus diisi']
+    required: true
   },
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: [true, 'User ID harus diisi']
+    required: true
   },
   payment_type: {
     type: String,
@@ -88,7 +88,7 @@ const paymentSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: {
-      values: PAYMENT_STATUSES,
+      values: ['pending', 'verified', 'rejected', 'replaced'],
       message: 'Status pembayaran tidak valid'
     },
     default: 'pending'
@@ -102,6 +102,16 @@ const paymentSchema = new mongoose.Schema({
   },
   rejection_reason: {
     type: String
+  },
+  previous_rejection_reason: {
+    type: String
+  },
+  replaced_at: {
+    type: Date
+  },
+  replaced_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
   notes: {
     type: String

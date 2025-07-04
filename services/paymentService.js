@@ -1,16 +1,12 @@
 import Payment from '../models/Payment.js';
 import Booking from '../models/Booking.js';
-import mongoose from 'mongoose';  // ← ADD THIS for transactions
+import mongoose from 'mongoose';
 import logger from '../config/logger.js';
 import {
   validatePaymentAmountLogic,
   validateTransferMatchesPayment,
   validateTransferNotFuture,
-  validateTransferNotTooOld,
-  validateStatusTransition,
-  PAYMENT_TYPES,
-  PAYMENT_STATUSES,
-  DP_AMOUNT
+  validateTransferNotTooOld
 } from '../validators/paymentValidators.js';
 
 export class PaymentService {
@@ -21,12 +17,13 @@ export class PaymentService {
     DP: 'dp_payment'
   };
 
-  static DP_AMOUNT = DP_AMOUNT;
+  static DP_AMOUNT = 50000; // Hardcode value instead of import
 
   static PAYMENT_STATUS = {
     PENDING: 'pending',
     VERIFIED: 'verified',
-    REJECTED: 'rejected'
+    REJECTED: 'rejected',
+    REPLACED: 'replaced'  // ← ADD THIS
   };
 
   // ============= VALIDATION METHODS =============
@@ -99,7 +96,25 @@ export class PaymentService {
     });
 
     if (existingPayment) {
-      throw new Error('Booking ini sudah memiliki pembayaran');
+      throw new Error('Booking ini sudah memiliki pembayaran aktif');
+    }
+
+    // Handle existing rejected payments
+    const rejectedPayments = await Payment.find({
+      booking: bookingId,
+      status: this.PAYMENT_STATUS.REJECTED
+    });
+
+    if (rejectedPayments.length > 0) {
+      console.log(`Found ${rejectedPayments.length} rejected payments for booking ${bookingId}`);
+      await Payment.updateMany(
+        { booking: bookingId, status: this.PAYMENT_STATUS.REJECTED },
+        { 
+          status: this.PAYMENT_STATUS.REPLACED,
+          replaced_at: new Date(),
+          replaced_by: userId
+        }
+      );
     }
 
     // Validate payment data
@@ -139,9 +154,9 @@ export class PaymentService {
       throw new Error('Payment tidak ditemukan');
     }
 
-    // Validate status transition
-    if (!validateStatusTransition(payment.status, 'verified', 'cashier')) {
-      throw new Error('Payment tidak dapat diverifikasi');
+    // Allow both pending and rejected to be approved
+    if (!['pending', 'rejected'].includes(payment.status)) {
+      throw new Error(`Payment tidak bisa diapprove (status: ${payment.status})`);
     }
 
     // Update payment
@@ -149,6 +164,12 @@ export class PaymentService {
     payment.verified_by = kasirId;
     payment.verified_at = new Date();
     payment.notes = notes;
+
+    // Handle previous rejection
+    if (payment.rejection_reason) {
+      payment.previous_rejection_reason = payment.rejection_reason;
+      payment.rejection_reason = undefined;
+    }
 
     // Update booking - auto confirmation
     const booking = payment.booking;
@@ -168,7 +189,8 @@ export class PaymentService {
       customer: payment.user,
       booking: booking._id,
       amount: payment.amount,
-      type: payment.payment_type
+      type: payment.payment_type,
+      was_previously_rejected: !!payment.previous_rejection_reason
     });
 
     return payment;

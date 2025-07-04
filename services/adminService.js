@@ -2,7 +2,6 @@ import User from '../models/User.js';
 import Booking from '../models/Booking.js';
 import Payment from '../models/Payment.js';
 import Field from '../models/Field.js';
-import logger from '../config/logger.js';
 import moment from 'moment-timezone';
 
 export class AdminService {

@@ -1,6 +1,5 @@
 import { PaymentService } from '../services/paymentService.js';
-import Payment from '../models/Payment.js';  // ← ADD THIS IMPORT
-import Booking from '../models/Booking.js';  // ← ADD THIS IMPORT (if not exists)
+import Payment from '../models/Payment.js'; 
 import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
 
@@ -74,6 +73,42 @@ export const createPayment = async (req, res) => {
       }
     };
 
+    // Cek pembayaran yang sudah ada
+    const existingPayment = await Payment.findOne({ 
+      booking: booking_id,
+      status: { $in: ['pending', 'verified'] }  // ← Tetap sama, TIDAK include 'rejected'
+    });
+
+    if (existingPayment) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Booking ini sudah memiliki pembayaran aktif`,
+        existing_payment: {
+          id: existingPayment._id,
+          status: existingPayment.status,
+          amount: existingPayment.amount
+        }
+      });
+    }
+
+    // Ganti status pembayaran yang ditolak menjadi 'replaced'
+    const rejectedPayments = await Payment.find({
+      booking: booking_id,
+      status: 'rejected'
+    });
+
+    if (rejectedPayments.length > 0) {
+      console.log(`Found ${rejectedPayments.length} rejected payments for booking ${booking_id}`);
+      await Payment.updateMany(
+        { booking: booking_id, status: 'rejected' },
+        { 
+          status: 'replaced',
+          replaced_at: new Date(),
+          replaced_by: req.user._id
+        }
+      );
+    }
+
     const payment = await PaymentService.createPayment(paymentData);
 
     // Clear relevant caches
@@ -93,7 +128,9 @@ export const createPayment = async (req, res) => {
 
     res.status(201).json({
       status: 'success',
-      message: `Pembayaran ${payment.payment_type_text} berhasil dibuat. Menunggu verifikasi.`,
+      message: rejectedPayments.length > 0 
+        ? '✅ Pembayaran baru berhasil diupload menggantikan yang sebelumnya ditolak'
+        : `✅ Pembayaran ${payment.payment_type_text} berhasil dibuat. Menunggu verifikasi.`,
       data: {
         payment,
         payment_summary: paymentSummary,
@@ -118,39 +155,131 @@ export const createPayment = async (req, res) => {
 export const approvePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const { notes } = req.body; // Optional notes
+    const { notes } = req.body;
 
-    const payment = await PaymentService.approvePayment(
-      paymentId,
-      req.user._id,
-      notes || 'Pembayaran disetujui oleh kasir'
-    );
-
-    // Clear cache
+    // Try PaymentService first
     try {
-      if (client && client.isOpen) {
-        await client.del('payments:pending');
-        await client.del(`payments:user:${payment.user}`);
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
-    }
+      const payment = await PaymentService.approvePayment(
+        paymentId,
+        req.user._id,
+        notes || 'Pembayaran disetujui oleh kasir'
+      );
 
-    res.status(200).json({
-      status: 'success',
-      message: '✅ Pembayaran berhasil disetujui',
-      data: { 
-        payment: {
-          id: payment._id,
-          status: payment.status,
-          amount: payment.amount,
-          payment_type: payment.payment_type_text,
-          approved_at: payment.verifiedAtWIB,
-          approved_by: req.user.name,
-          notes: payment.notes
+      // Clear cache
+      try {
+        if (client && client.isOpen) {
+          await client.del('payments:pending');
+          await client.del(`payments:user:${payment.user}`);
         }
+      } catch (redisError) {
+        logger.warn('Redis cache clear error:', redisError);
       }
-    });
+
+      const message = payment.previous_rejection_reason 
+        ? '✅ Pembayaran berhasil di-approve setelah review ulang'
+        : '✅ Pembayaran berhasil disetujui';
+
+      res.status(200).json({
+        status: 'success',
+        message: message,
+        data: { 
+          payment: {
+            id: payment._id,
+            status: payment.status,
+            amount: payment.amount,
+            payment_type: payment.payment_type_text,
+            approved_at: payment.verifiedAtWIB,
+            approved_by: req.user.name,
+            notes: payment.notes,
+            was_previously_rejected: !!payment.previous_rejection_reason
+          }
+        }
+      });
+
+    } catch (serviceError) {
+      // Fallback to direct logic if service fails
+      console.log('PaymentService failed, using direct logic:', serviceError.message);
+      
+      const payment = await Payment.findById(paymentId).populate('booking');
+      
+      if (!payment) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Payment tidak ditemukan'
+        });
+      }
+
+      // Allow both pending and rejected
+      if (!['pending', 'rejected'].includes(payment.status)) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Payment tidak bisa diapprove (status: ${payment.status})`
+        });
+      }
+
+      const booking = payment.booking;
+      if (!booking) {
+        return res.status(404).json({
+          status: 'error', 
+          message: 'Booking tidak ditemukan'
+        });
+      }
+
+      // Update payment
+      payment.status = 'verified';
+      payment.verified_by = req.user._id;
+      payment.verified_at = new Date();
+      payment.notes = notes || 'Pembayaran disetujui';
+
+      // Handle previous rejection
+      if (payment.rejection_reason) {
+        payment.previous_rejection_reason = payment.rejection_reason;
+        payment.rejection_reason = undefined;
+      }
+
+      // Update booking
+      booking.status_pemesanan = 'confirmed';
+      booking.payment_status = payment.payment_type === 'full_payment' 
+        ? 'fully_paid' 
+        : 'dp_confirmed';
+      booking.kasir = req.user._id;
+      booking.konfirmasi_at = new Date();
+
+      // Save changes
+      await payment.save();
+      await booking.save();
+
+      // Clear cache
+      try {
+        if (client && client.isOpen) {
+          await client.del('payments:pending');
+          await client.del(`payments:user:${payment.user}`);
+        }
+      } catch (redisError) {
+        logger.warn('Redis cache clear error:', redisError);
+      }
+
+      const message = payment.previous_rejection_reason 
+        ? '✅ Pembayaran berhasil di-approve setelah review ulang'
+        : '✅ Pembayaran berhasil disetujui';
+
+      res.status(200).json({
+        status: 'success',
+        message: message,
+        data: { 
+          payment: {
+            id: payment._id,
+            status: 'Terverifikasi',
+            amount: payment.amount,
+            payment_type: payment.payment_type_text || payment.payment_type,
+            approved_at: payment.verifiedAtWIB,
+            approved_by: req.user.name,
+            notes: payment.notes,
+            was_previously_rejected: !!payment.previous_rejection_reason
+          }
+        }
+      });
+    }
 
   } catch (error) {
     logger.error(`Payment approval error: ${error.message}`, {
@@ -224,14 +353,6 @@ export const rejectPayment = async (req, res) => {
         return res.status(404).json({
           status: 'error',
           message: 'Payment tidak ditemukan'
-        });
-      }
-
-      if (payment.status !== 'pending') {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Payment sudah diproses sebelumnya',
-          current_status: payment.status
         });
       }
 
@@ -309,7 +430,18 @@ export const getPendingPayments = async (req, res) => {
       });
     }
 
-    const payments = await PaymentService.getPendingPayments();
+    const payments = await Payment.find({ 
+      status: 'pending'  // ← Hanya pending, tidak include replaced/rejected
+    })
+    .populate('user', 'name email')
+    .populate({
+      path: 'booking',
+      populate: {
+        path: 'lapangan',
+        select: 'nama jenis_lapangan'
+      }
+    })
+    .sort({ createdAt: -1 });
 
     // Cache for 2 minutes
     try {
