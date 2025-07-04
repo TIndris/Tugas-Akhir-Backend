@@ -1,5 +1,13 @@
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
+import {
+  validatePaymentAmountForType,
+  validateTransferAmountField,
+  validateTransferDateField,
+  validateSenderNameField,
+  PAYMENT_TYPES,
+  PAYMENT_STATUSES
+} from '../validators/paymentValidators.js';
 
 const paymentSchema = new mongoose.Schema({
   booking: {
@@ -15,7 +23,7 @@ const paymentSchema = new mongoose.Schema({
   payment_type: {
     type: String,
     enum: {
-      values: ['full_payment', 'dp_payment'],
+      values: PAYMENT_TYPES,
       message: 'Tipe pembayaran tidak valid'
     },
     required: [true, 'Tipe pembayaran harus diisi']
@@ -23,7 +31,7 @@ const paymentSchema = new mongoose.Schema({
   amount: {
     type: Number,
     required: [true, 'Jumlah pembayaran harus diisi'],
-    min: [1000, 'Minimal pembayaran Rp 1.000']
+    min: [50000, 'Minimal pembayaran Rp 50.000'] // Updated minimum
   },
   total_booking_amount: {
     type: Number,
@@ -80,7 +88,7 @@ const paymentSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: {
-      values: ['pending', 'verified', 'rejected'],
+      values: PAYMENT_STATUSES,
       message: 'Status pembayaran tidak valid'
     },
     default: 'pending'
@@ -104,7 +112,7 @@ const paymentSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Virtual fields
+// ============= VIRTUAL FIELDS ONLY =============
 paymentSchema.virtual('createdAtWIB').get(function() {
   return moment(this.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
 });
@@ -126,8 +134,15 @@ paymentSchema.virtual('status_text').get(function() {
   return statusMap[this.status];
 });
 
-// Middleware untuk menghitung remaining amount
+// ============= VALIDATION MIDDLEWARE =============
+paymentSchema.pre('save', validatePaymentAmountForType);
+paymentSchema.pre('save', validateTransferAmountField);
+paymentSchema.pre('save', validateTransferDateField);
+paymentSchema.pre('save', validateSenderNameField);
+
+// ============= BUSINESS LOGIC MIDDLEWARE =============
 paymentSchema.pre('save', function(next) {
+  // Calculate remaining amount
   if (this.payment_type === 'dp_payment') {
     this.remaining_amount = this.total_booking_amount - this.amount;
   } else {
@@ -136,10 +151,11 @@ paymentSchema.pre('save', function(next) {
   next();
 });
 
-// Index untuk performance
+// ============= INDEXES =============
 paymentSchema.index({ booking: 1 });
 paymentSchema.index({ user: 1 });
 paymentSchema.index({ status: 1 });
 paymentSchema.index({ payment_type: 1 });
+paymentSchema.index({ verified_by: 1 });
 
 export default mongoose.model('Payment', paymentSchema);
