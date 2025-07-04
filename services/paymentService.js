@@ -180,9 +180,8 @@ export class PaymentService {
       throw new Error('Payment tidak ditemukan');
     }
 
-    // Validate status transition
-    if (!validateStatusTransition(payment.status, 'rejected', 'cashier')) {
-      throw new Error('Payment tidak dapat ditolak');
+    if (payment.status !== this.PAYMENT_STATUS.PENDING) {
+      throw new Error(`Payment sudah diproses sebelumnya (status: ${payment.status})`);
     }
 
     if (!reason || reason.trim().length < 5) {
@@ -193,24 +192,36 @@ export class PaymentService {
     payment.status = this.PAYMENT_STATUS.REJECTED;
     payment.verified_by = kasirId;
     payment.verified_at = new Date();
-    payment.rejection_reason = reason;
+    payment.rejection_reason = reason.trim();
 
-    // Reset booking
+    // ✅ COMPLETE BOOKING RESET
     const booking = payment.booking;
-    booking.status_pemesanan = 'pending';
-    booking.payment_status = 'no_payment';
-    booking.kasir = undefined;
-    booking.konfirmasi_at = undefined;
+    booking.status_pemesanan = 'pending';        // Reset to initial state
+    booking.payment_status = 'no_payment';       // Reset payment status
+    booking.kasir = undefined;                   // Remove kasir assignment
+    booking.konfirmasi_at = undefined;           // Remove confirmation timestamp
 
-    // Save changes
-    await payment.save();
-    await booking.save();
+    // Save both documents in transaction
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await payment.save({ session });
+        await booking.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
-    logger.info(`Payment REJECTED & Booking RESET: ${payment._id}`, {
+    logger.info(`Payment REJECTED & Booking COMPLETELY RESET: ${payment._id}`, {
       kasir: kasirId,
       customer: payment.user,
       booking: booking._id,
-      reason: reason
+      reason: reason.trim(),
+      booking_reset: {
+        status: booking.status_pemesanan,
+        payment_status: booking.payment_status,
+        kasir_removed: booking.kasir === undefined
+      }
     });
 
     return payment;

@@ -166,57 +166,85 @@ export const approvePayment = async (req, res) => {
 // ❌ REJECT PAYMENT - Simple endpoint
 export const rejectPayment = async (req, res) => {
   try {
-    const { paymentId } = req.params;
-    const { reason } = req.body; // Optional rejection reason
+    console.log('=== PAYMENT REJECTION DEBUG ===');
+    console.log('Payment ID:', req.params.id);
+    console.log('Request body:', req.body);
 
-    if (!reason || reason.trim().length < 5) {
+    const { reason, rejection_reason } = req.body;
+    const finalReason = reason || rejection_reason;
+
+    if (!finalReason || finalReason.trim().length < 5) {
       return res.status(400).json({
         status: 'error',
-        message: 'Alasan penolakan harus diisi minimal 5 karakter',
-        example: {
-          reason: "Bukti transfer tidak jelas"
-        }
+        message: 'Alasan penolakan harus diisi minimal 5 karakter'
       });
     }
 
-    const payment = await PaymentService.rejectPayment(
-      paymentId,
-      req.user._id,
-      reason
-    );
-
-    // Clear cache
-    try {
-      if (client && client.isOpen) {
-        await client.del('payments:pending');
-        await client.del(`payments:user:${payment.user}`);
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
+    // Find payment with booking populated
+    const payment = await Payment.findById(req.params.id).populate('booking');
+    
+    if (!payment) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Payment tidak ditemukan'
+      });
     }
+
+    if (payment.status !== 'pending') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Payment sudah diproses sebelumnya',
+        current_status: payment.status
+      });
+    }
+
+    // ✅ COMPLETE RESET - Update payment
+    payment.status = 'rejected';
+    payment.verified_by = req.user._id;
+    payment.verified_at = new Date();
+    payment.rejection_reason = finalReason.trim();
+
+    // ✅ COMPLETE RESET - Reset booking to initial state
+    const booking = payment.booking;
+    booking.status_pemesanan = 'pending';        // ← Reset to pending
+    booking.payment_status = 'no_payment';       // ← Reset payment status
+    booking.kasir = undefined;                   // ← Remove kasir
+    booking.konfirmasi_at = undefined;           // ← Remove confirmation date
+
+    // Save both documents
+    await payment.save();
+    await booking.save();
+
+    console.log('Payment rejected and booking reset:', {
+      payment_id: payment._id,
+      booking_id: booking._id,
+      booking_status: booking.status_pemesanan,
+      payment_status: booking.payment_status,
+      kasir: booking.kasir
+    });
 
     res.status(200).json({
       status: 'success',
-      message: '❌ Pembayaran ditolak',
-      data: { 
+      message: '❌ Pembayaran ditolak dan booking direset',
+      data: {
         payment: {
           id: payment._id,
-          status: payment.status,
-          amount: payment.amount,
-          payment_type: payment.payment_type_text,
-          rejected_at: payment.verifiedAtWIB,
+          status: 'Ditolak',
+          rejection_reason: payment.rejection_reason,
           rejected_by: req.user.name,
-          rejection_reason: payment.rejection_reason
+          rejected_at: payment.verifiedAtWIB
+        },
+        booking: {
+          id: booking._id,
+          status: 'pending',
+          payment_status: 'no_payment',
+          kasir: null
         }
       }
     });
 
   } catch (error) {
-    logger.error(`Payment rejection error: ${error.message}`, {
-      kasir: req.user?._id,
-      paymentId: req.params.paymentId
-    });
-
+    console.error('Payment rejection error:', error);
     res.status(400).json({
       status: 'error',
       message: error.message
