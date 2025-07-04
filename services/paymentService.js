@@ -100,8 +100,9 @@ export class PaymentService {
       bank_details: this.getBankDetails()
     });
 
-    // Update booking status
-    booking.status_pemesanan = 'pending_payment';
+    // Update booking - gunakan status yang sudah ada
+    booking.payment_status = 'pending_payment';  // ← Payment status
+    // booking.status_pemesanan tetap 'pending'   // ← Keep original booking status
     await booking.save();
 
     logger.info(`Payment created: ${payment._id}`, {
@@ -135,17 +136,18 @@ export class PaymentService {
       payment.verified_at = new Date();
       payment.notes = notes || 'Pembayaran telah diverifikasi';
 
-      // Update booking status based on payment type
       const booking = payment.booking;
       if (payment.payment_type === this.PAYMENT_TYPES.FULL) {
-        booking.status_pemesanan = 'confirmed';
+        booking.status_pemesanan = 'confirmed';   // ← Use existing status
+        booking.payment_status = 'fully_paid';
       } else {
-        booking.status_pemesanan = 'dp_confirmed';
+        booking.status_pemesanan = 'confirmed';   // ← Use existing status  
+        booking.payment_status = 'dp_confirmed';
       }
       booking.kasir = verifierId;
       booking.konfirmasi_at = new Date();
       await booking.save();
-
+      
       logger.info(`Payment verified: ${payment._id}`, {
         verifier: verifierId,
         booking: payment.booking._id,

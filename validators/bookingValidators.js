@@ -63,7 +63,14 @@ export const validateBookingNotInPast = (date, time) => {
 };
 
 // Booking status validation
-export const BOOKING_STATUSES = ['pending', 'confirmed', 'cancelled', 'completed'];
+export const BOOKING_STATUSES = [
+  'pending',
+  'confirmed', 
+  'cancelled',
+  'completed',
+  'pending_payment',
+  'dp_confirmed'
+];
 
 export const validateBookingStatus = (status) => {
   return BOOKING_STATUSES.includes(status);
