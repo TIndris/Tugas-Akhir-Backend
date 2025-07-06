@@ -10,8 +10,8 @@ export const createBooking = async (req, res) => {
 
     // Cache key untuk availability
     const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;
-
-    // Check field cache first
+    
+    // Get field data (existing code)
     let field = null;
     const fieldCacheKey = `field:${lapangan_id}`;
     
@@ -46,7 +46,28 @@ export const createBooking = async (req, res) => {
       }
     }
 
-    // Validasi jam operasional
+    // ✅ TAMBAHKAN VALIDASI STATUS DI SINI
+    if (field.status !== 'tersedia') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Lapangan sedang tidak tersedia untuk booking',
+        error: {
+          code: 'FIELD_NOT_AVAILABLE',
+          current_status: field.status,
+          field_name: field.nama
+        }
+      });
+    }
+
+    // ✅ TAMBAHAN: Validasi jenis lapangan aktif
+    if (!field.jenis_lapangan) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Jenis lapangan tidak valid'
+      });
+    }
+
+    // Existing validations continue...
     const bookingHour = parseInt(jam_booking.split(':')[0]);
     const closeHour = parseInt(field.jam_tutup.split(':')[0]);
     const openHour = parseInt(field.jam_buka.split(':')[0]);
@@ -236,6 +257,21 @@ export const getAvailableSlots = async (req, res) => {
       return res.status(404).json({
         status: 'error',
         message: 'Lapangan tidak ditemukan'
+      });
+    }
+
+    // ✅ TAMBAHKAN: Check field availability
+    if (field.status !== 'tersedia') {
+      return res.status(400).json({
+        status: 'error',
+        message: `Lapangan sedang ${field.status} dan tidak tersedia untuk booking`,
+        data: {
+          fieldName: field.nama,
+          fieldType: field.jenis_lapangan,
+          status: field.status,
+          date: date,
+          slots: [] // Empty slots karena lapangan tidak tersedia
+        }
       });
     }
 

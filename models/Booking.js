@@ -125,6 +125,11 @@ bookingSchema.pre('save', async function(next) {
     throw new Error('Lapangan tidak ditemukan');
   }
 
+  // ✅ TAMBAHKAN: Validasi status lapangan
+  if (field.status !== 'tersedia') {
+    throw new Error(`Lapangan sedang ${field.status} dan tidak dapat dibooking`);
+  }
+
   // Parse booking time and operational hours
   const bookingHour = parseInt(this.jam_booking.split(':')[0]);
   const closeHour = parseInt(field.jam_tutup.split(':')[0]);
@@ -146,6 +151,7 @@ bookingSchema.pre('save', async function(next) {
       lapangan: this.lapangan,
       tanggal_booking: this.tanggal_booking,
       jam_booking: this.jam_booking,
+      _id: { $ne: this._id },
       status_pemesanan: { $in: ['pending', 'confirmed'] }
     });
 

@@ -27,6 +27,11 @@ export class BookingService {
         throw new Error('Lapangan tidak ditemukan');
       }
 
+      // ✅ TAMBAHKAN: Validasi status lapangan
+      if (field.status !== 'tersedia') {
+        throw new Error(`Lapangan sedang ${field.status} dan tidak dapat dibooking`);
+      }
+
       const bookingHour = parseInt(bookingTime.split(':')[0]);
       const closeHour = parseInt(field.jam_tutup.split(':')[0]);
       const openHour = parseInt(field.jam_buka.split(':')[0]);
