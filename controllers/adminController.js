@@ -112,7 +112,7 @@ export const createBankAccount = async (req, res) => {
 
     res.status(201).json({
       status: 'success',
-      message: '✅ Rekening bank berhasil ditambahkan',
+      message: 'Rekening bank berhasil ditambahkan',
       data: { bankAccount }
     });
 
@@ -192,7 +192,7 @@ export const updateBankAccount = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      message: '✅ Rekening bank berhasil diupdate',
+      message: 'Rekening bank berhasil diupdate',
       data: { bankAccount }
     });
 
@@ -244,7 +244,7 @@ export const deleteBankAccount = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      message: '✅ Rekening bank berhasil dihapus'
+      message: 'Rekening bank berhasil dihapus'
     });
 
   } catch (error) {
@@ -289,7 +289,7 @@ export const setPrimaryBankAccount = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      message: '✅ Rekening utama berhasil diatur',
+      message: 'Rekening utama berhasil diatur',
       data: { bankAccount }
     });
 

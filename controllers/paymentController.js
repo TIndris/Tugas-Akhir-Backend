@@ -10,11 +10,11 @@ export const createPayment = async (req, res) => {
       payment_type, 
       sender_name, 
       transfer_amount, 
-      transfer_date,  // ← Format: "2025-07-06"
+      transfer_date,  
       transfer_reference 
     } = req.body;
 
-    // ✅ Validate transfer_date (date only format)
+    
     const validateTransferDate = (transferDateStr) => {
       try {
         // Check format YYYY-MM-DD
@@ -183,8 +183,8 @@ export const createPayment = async (req, res) => {
     res.status(201).json({
       status: 'success',
       message: rejectedPayments.length > 0 
-        ? '✅ Pembayaran baru berhasil diupload menggantikan yang sebelumnya ditolak'
-        : `✅ Pembayaran ${payment.payment_type_text} berhasil dibuat. Menunggu verifikasi.`,
+        ? 'Pembayaran baru berhasil diupload menggantikan yang sebelumnya ditolak'
+        : `Pembayaran ${payment.payment_type_text} berhasil dibuat. Menunggu verifikasi.`,
       data: {
         payment: {
           _id: payment._id,
@@ -244,8 +244,8 @@ export const approvePayment = async (req, res) => {
       }
 
       const message = payment.previous_rejection_reason 
-        ? '✅ Pembayaran berhasil di-approve setelah review ulang'
-        : '✅ Pembayaran berhasil disetujui';
+        ? 'Pembayaran berhasil di-approve setelah review ulang'
+        : 'Pembayaran berhasil disetujui';
 
       res.status(200).json({
         status: 'success',
@@ -328,8 +328,8 @@ export const approvePayment = async (req, res) => {
       }
 
       const message = payment.previous_rejection_reason 
-        ? '✅ Pembayaran berhasil di-approve setelah review ulang'
-        : '✅ Pembayaran berhasil disetujui';
+        ? 'Pembayaran berhasil di-approve setelah review ulang'
+        : 'Pembayaran berhasil disetujui';
 
       res.status(200).json({
         status: 'success',
@@ -401,7 +401,7 @@ export const rejectPayment = async (req, res) => {
 
       res.status(200).json({
         status: 'success',
-        message: '❌ Pembayaran ditolak dan booking direset',
+        message: 'Pembayaran ditolak dan booking direset',
         data: {
           payment: {
             id: payment._id,
@@ -453,7 +453,7 @@ export const rejectPayment = async (req, res) => {
 
       res.status(200).json({
         status: 'success',
-        message: '❌ Pembayaran ditolak dan booking direset',
+        message: 'Pembayaran ditolak dan booking direset',
         data: {
           payment: {
             id: payment._id,
