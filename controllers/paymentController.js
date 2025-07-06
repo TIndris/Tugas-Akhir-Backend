@@ -115,9 +115,17 @@ export const createPayment = async (req, res) => {
       payment.payment_type
     );
 
-    // ✅ Include bank details in response
-    const bankDetails = await PaymentService.getBankDetails();
-    const availableBanks = await PaymentService.getAllActiveBanks();
+    // ✅ Handle bank details error gracefully
+    let bankDetails = null;
+    let availableBanks = [];
+
+    try {
+      bankDetails = await PaymentService.getBankDetails();
+      availableBanks = await PaymentService.getAllActiveBanks();
+    } catch (bankError) {
+      logger.warn('Bank details unavailable during payment creation:', bankError.message);
+      // Continue without bank details - payment still created
+    }
 
     res.status(201).json({
       status: 'success',
@@ -128,7 +136,8 @@ export const createPayment = async (req, res) => {
         payment,
         payment_summary: paymentSummary,
         bank_details: bankDetails,
-        available_banks: availableBanks
+        available_banks: availableBanks,
+        note: !bankDetails ? 'Info rekening tidak tersedia, silakan hubungi admin' : null
       }
     });
 
@@ -556,13 +565,35 @@ export const getPaymentById = async (req, res) => {
 
 export const getBankInfo = async (req, res) => {
   try {
-    const bankDetails = PaymentService.getBankDetails();
+    // ✅ Handle bank details error gracefully
+    let bankDetails = null;
+    let availableBanks = [];
+    
+    try {
+      bankDetails = await PaymentService.getBankDetails();
+      availableBanks = await PaymentService.getAllActiveBanks();
+    } catch (bankError) {
+      logger.warn('Bank details unavailable:', bankError.message);
+      
+      // If no banks configured
+      if (bankError.message.includes('rekening bank')) {
+        return res.status(503).json({
+          status: 'error',
+          message: 'Sistem pembayaran sedang tidak tersedia',
+          error: {
+            code: 'NO_BANK_ACCOUNTS',
+            description: 'Admin belum mengonfigurasi rekening pembayaran'
+          }
+        });
+      }
+    }
     
     res.status(200).json({
       status: 'success',
-      message: 'Silakan transfer ke rekening berikut',
+      message: 'Informasi pembayaran',
       data: {
-        bank_details: bankDetails,
+        primary_bank: bankDetails,
+        available_banks: availableBanks,
         payment_options: [
           {
             type: 'dp_payment',
@@ -576,17 +607,12 @@ export const getBankInfo = async (req, res) => {
             amount: 'Sesuai total booking',
             description: 'Bayar langsung sesuai total harga booking'
           }
-        ],
-        instructions: [
-          'Transfer sesuai nominal yang dipilih',
-          'Upload bukti transfer yang jelas',
-          'Sertakan nama pengirim yang sesuai',
-          'Pembayaran akan diverifikasi dalam 1x24 jam'
         ]
       }
     });
 
   } catch (error) {
+    logger.error('Get bank info error:', error);
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat mengambil informasi bank'
