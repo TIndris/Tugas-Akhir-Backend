@@ -5,39 +5,77 @@ import logger from '../config/logger.js';
 
 export const createPayment = async (req, res) => {
   try {
-    const {
-      booking_id,
-      payment_type,
-      sender_name,
-      transfer_amount,
-      transfer_date,
-      transfer_reference
+    const { 
+      booking_id, 
+      payment_type, 
+      sender_name, 
+      transfer_amount, 
+      transfer_date,  // ← Format: "2025-07-06"
+      transfer_reference 
     } = req.body;
+
+    // ✅ Validate transfer_date (date only format)
+    const validateTransferDate = (transferDateStr) => {
+      try {
+        // Check format YYYY-MM-DD
+        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+        if (!datePattern.test(transferDateStr)) {
+          throw new Error('Format tanggal tidak valid. Gunakan format: YYYY-MM-DD (contoh: 2025-07-06)');
+        }
+        
+        const transferDate = new Date(transferDateStr + 'T00:00:00.000Z');
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Reset time to 00:00:00
+        
+        if (isNaN(transferDate.getTime())) {
+          throw new Error('Tanggal tidak valid');
+        }
+        
+        // Check not in future
+        if (transferDate > today) {
+          throw new Error('Tanggal transfer tidak boleh di masa depan');
+        }
+        
+        // Check not too old (30 days)
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        thirtyDaysAgo.setHours(0, 0, 0, 0);
+        
+        if (transferDate < thirtyDaysAgo) {
+          throw new Error('Tanggal transfer terlalu lama (maksimal 30 hari)');
+        }
+        
+        return transferDate;
+        
+      } catch (error) {
+        throw new Error(`Validasi tanggal transfer: ${error.message}`);
+      }
+    };
 
     // Validate required fields
     if (!booking_id || !payment_type || !sender_name || !transfer_amount || !transfer_date) {
       return res.status(400).json({
         status: 'error',
         message: 'Semua field wajib diisi',
-        required_fields: ['booking_id', 'payment_type', 'sender_name', 'transfer_amount', 'transfer_date']
+        required_fields: ['booking_id', 'payment_type', 'sender_name', 'transfer_amount', 'transfer_date'],
+        transfer_date_format: 'YYYY-MM-DD (contoh: 2025-07-06)'
       });
     }
 
-    // Validate file upload
-    if (!req.file || !req.file.path) {
+    // Validate transfer date
+    let transferDateValid;
+    try {
+      transferDateValid = validateTransferDate(transfer_date);
+    } catch (dateError) {
       return res.status(400).json({
         status: 'error',
-        message: 'Bukti transfer harus diupload',
-        error: {
-          code: 'TRANSFER_PROOF_REQUIRED',
-          field: 'transfer_proof'
-        }
+        message: dateError.message,
+        example_format: '2025-07-06'
       });
     }
 
     // Validate payment type
     const VALID_PAYMENT_TYPES = ['dp_payment', 'full_payment'];
-
     if (!VALID_PAYMENT_TYPES.includes(payment_type)) {
       return res.status(400).json({
         status: 'error',
@@ -46,10 +84,10 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // Determine payment amount based on type
+    // Determine payment amount
     let paymentAmount;
     if (payment_type === 'dp_payment') {
-      paymentAmount = 50000; // ← Fixed DP amount or PaymentService.DP_AMOUNT
+      paymentAmount = 50000; // Fixed DP amount
     } else if (payment_type === 'full_payment') {
       paymentAmount = parseInt(transfer_amount);
     }
@@ -64,30 +102,24 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    const paymentData = {
-      bookingId: booking_id,
-      userId: req.user._id,
-      paymentType: payment_type,
-      amount: paymentAmount,
-      transferProof: req.file.path,
-      transferDetails: {
-        sender_name,
-        transfer_amount: parseInt(transfer_amount),
-        transfer_date: new Date(transfer_date),
-        transfer_reference: transfer_reference || ''
-      }
-    };
+    // Validate file upload
+    if (!req.file || !req.file.path) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Bukti transfer harus diupload'
+      });
+    }
 
-    // Cek pembayaran yang sudah ada
-    const existingPayment = await Payment.findOne({ 
+    // Check for existing payment
+    const existingPayment = await Payment.findOne({
       booking: booking_id,
-      status: { $in: ['pending', 'verified'] }  // ← Tetap sama, TIDAK include 'rejected'
+      status: { $in: ['pending', 'verified'] }
     });
 
     if (existingPayment) {
       return res.status(400).json({
         status: 'error',
-        message: `Booking ini sudah memiliki pembayaran aktif`,
+        message: 'Booking ini sudah memiliki pembayaran aktif',
         existing_payment: {
           id: existingPayment._id,
           status: existingPayment.status,
@@ -96,14 +128,13 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // Ganti status pembayaran yang ditolak menjadi 'replaced'
+    // Handle rejected payments
     const rejectedPayments = await Payment.find({
       booking: booking_id,
       status: 'rejected'
     });
 
     if (rejectedPayments.length > 0) {
-      console.log(`Found ${rejectedPayments.length} rejected payments for booking ${booking_id}`);
       await Payment.updateMany(
         { booking: booking_id, status: 'rejected' },
         { 
@@ -114,22 +145,39 @@ export const createPayment = async (req, res) => {
       );
     }
 
+    // Prepare payment data
+    const paymentData = {
+      bookingId: booking_id,
+      userId: req.user._id,
+      paymentType: payment_type,
+      amount: paymentAmount,
+      transferProof: req.file.path,
+      transferDetails: {
+        sender_name,
+        transfer_amount: parseInt(transfer_amount),
+        transfer_date: transferDateValid,  // ← Store as Date object
+        transfer_date_string: transfer_date, // ← Store original string format
+        transfer_reference: transfer_reference || ''
+      }
+    };
+
+    // Create payment
     const payment = await PaymentService.createPayment(paymentData);
+    
+    // Get payment summary
     const paymentSummary = PaymentService.calculatePaymentSummary(
       payment.total_booking_amount, 
       payment.payment_type
     );
 
-    // ✅ Handle bank details error gracefully
+    // Handle bank details
     let bankDetails = null;
     let availableBanks = [];
-
     try {
       bankDetails = await PaymentService.getBankDetails();
       availableBanks = await PaymentService.getAllActiveBanks();
     } catch (bankError) {
       logger.warn('Bank details unavailable during payment creation:', bankError.message);
-      // Continue without bank details - payment still created
     }
 
     res.status(201).json({
@@ -138,7 +186,23 @@ export const createPayment = async (req, res) => {
         ? '✅ Pembayaran baru berhasil diupload menggantikan yang sebelumnya ditolak'
         : `✅ Pembayaran ${payment.payment_type_text} berhasil dibuat. Menunggu verifikasi.`,
       data: {
-        payment,
+        payment: {
+          _id: payment._id,
+          booking: payment.booking,
+          payment_type: payment.payment_type,
+          payment_type_text: payment.payment_type_text,
+          amount: payment.amount,
+          status: payment.status,
+          transfer_details: {
+            sender_name: payment.transfer_details.sender_name,
+            transfer_amount: payment.transfer_details.transfer_amount,
+            transfer_date: transfer_date, // ← Return original string format
+            transfer_date_display: formatDateDisplay(transfer_date), // ← User-friendly display
+            transfer_reference: payment.transfer_details.transfer_reference
+          },
+          transfer_proof: payment.transfer_proof,
+          submittedAtWIB: formatDateTimeWIB(payment.createdAt)
+        },
         payment_summary: paymentSummary,
         bank_details: bankDetails,
         available_banks: availableBanks,
@@ -147,11 +211,7 @@ export const createPayment = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Payment creation error: ${error.message}`, {
-      user: req.user?._id,
-      action: 'CREATE_PAYMENT_ERROR'
-    });
-
+    logger.error('Create payment error:', error);
     res.status(400).json({
       status: 'error',
       message: error.message
@@ -623,4 +683,27 @@ export const getBankInfo = async (req, res) => {
       message: 'Terjadi kesalahan saat mengambil informasi bank'
     });
   }
+};
+
+// ✅ Helper function for date display
+const formatDateDisplay = (dateString) => {
+  const date = new Date(dateString + 'T00:00:00.000Z');
+  return date.toLocaleDateString('id-ID', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+};
+
+const formatDateTimeWIB = (date) => {
+  return new Date(date).toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
 };

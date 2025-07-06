@@ -70,15 +70,22 @@ const paymentSchema = new mongoose.Schema({
   transfer_details: {
     sender_name: {
       type: String,
-      required: [true, 'Nama pengirim harus diisi']
+      required: true,
+      trim: true
     },
     transfer_amount: {
       type: Number,
-      required: [true, 'Jumlah transfer harus diisi']
+      required: true,
+      min: 0
     },
     transfer_date: {
-      type: Date,
-      required: [true, 'Tanggal transfer harus diisi']
+      type: Date,  // ← Store as Date object
+      required: true
+    },
+    transfer_date_string: {
+      type: String,  // ← Store original string "2025-07-06"
+      required: true,
+      match: /^\d{4}-\d{2}-\d{2}$/  // ← Validate YYYY-MM-DD format
     },
     transfer_reference: {
       type: String,
@@ -142,6 +149,20 @@ paymentSchema.virtual('status_text').get(function() {
     'rejected': 'Ditolak'
   };
   return statusMap[this.status];
+});
+
+// ✅ Virtual for Indonesian date display
+paymentSchema.virtual('transfer_details.transfer_date_display').get(function() {
+  if (this.transfer_details.transfer_date_string) {
+    const date = new Date(this.transfer_details.transfer_date_string + 'T00:00:00.000Z');
+    return date.toLocaleDateString('id-ID', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  }
+  return null;
 });
 
 // ============= VALIDATION MIDDLEWARE =============
