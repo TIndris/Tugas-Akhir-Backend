@@ -110,21 +110,14 @@ export const createPayment = async (req, res) => {
     }
 
     const payment = await PaymentService.createPayment(paymentData);
-
-    // Clear relevant caches
-    try {
-      if (client && client.isOpen) {
-        await client.del(`bookings:${req.user._id}`);
-        await client.del('payments:pending');
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
-    }
-
     const paymentSummary = PaymentService.calculatePaymentSummary(
       payment.total_booking_amount, 
       payment.payment_type
     );
+
+    // ✅ Include bank details in response
+    const bankDetails = await PaymentService.getBankDetails();
+    const availableBanks = await PaymentService.getAllActiveBanks();
 
     res.status(201).json({
       status: 'success',
@@ -134,7 +127,8 @@ export const createPayment = async (req, res) => {
       data: {
         payment,
         payment_summary: paymentSummary,
-        bank_details: PaymentService.getBankDetails()
+        bank_details: bankDetails,
+        available_banks: availableBanks
       }
     });
 

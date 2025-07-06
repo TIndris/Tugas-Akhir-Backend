@@ -1,5 +1,13 @@
 import express from 'express';
-import { createCashier, getCashiers } from '../controllers/adminController.js';
+import { 
+  createCashier, 
+  getCashiers, 
+  createBankAccount, 
+  getAllBankAccounts, 
+  updateBankAccount, 
+  deleteBankAccount, 
+  setPrimaryBankAccount 
+} from '../controllers/adminController.js';
 import { 
   createField, 
   getAllFields, 
@@ -27,5 +35,12 @@ router.get('/fields', getAllFields);
 router.get('/fields/:id', getField);
 router.patch('/fields/:id', upload.single('gambar'), updateField); // ← ADD UPLOAD MIDDLEWARE
 router.delete('/fields/:id', deleteField);
+
+// Bank Account Management routes
+router.post('/bank-accounts', createBankAccount);
+router.get('/bank-accounts', getAllBankAccounts);
+router.patch('/bank-accounts/:id', updateBankAccount);
+router.delete('/bank-accounts/:id', deleteBankAccount);
+router.patch('/bank-accounts/:id/set-primary', setPrimaryBankAccount);
 
 export default router;

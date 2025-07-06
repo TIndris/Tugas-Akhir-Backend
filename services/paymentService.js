@@ -8,6 +8,7 @@ import {
   validateTransferNotFuture,
   validateTransferNotTooOld
 } from '../validators/paymentValidators.js';
+import BankAccount from '../models/BankAccount.js';
 
 export class PaymentService {
   
@@ -41,13 +42,72 @@ export class PaymentService {
   }
 
   // ============= BUSINESS LOGIC METHODS =============
-  static getBankDetails() {
-    return {
-      bank_name: 'Bank Syariah Indonesia (BSI)',
-      account_number: '1234567890',
-      account_name: 'PT Lapangan Olahraga Indonesia',
-      account_type: 'Tabungan'
-    };
+  static async getBankDetails() {
+    try {
+      // Get primary active bank account
+      const primaryBank = await BankAccount.findOne({ 
+        is_active: true, 
+        is_primary: true 
+      });
+
+      if (primaryBank) {
+        return {
+          bank_name: primaryBank.bank_name,
+          account_number: primaryBank.account_number,
+          account_name: primaryBank.account_name,
+          account_type: primaryBank.account_type,
+          description: primaryBank.description
+        };
+      }
+
+      // Fallback: get any active bank account
+      const fallbackBank = await BankAccount.findOne({ is_active: true });
+      if (fallbackBank) {
+        return {
+          bank_name: fallbackBank.bank_name,
+          account_number: fallbackBank.account_number,
+          account_name: fallbackBank.account_name,
+          account_type: fallbackBank.account_type,
+          description: fallbackBank.description
+        };
+      }
+
+      // ✅ NO HARDCODED FALLBACK - Clear error message
+      throw new Error('Belum ada rekening bank aktif. Admin perlu menambahkan rekening pembayaran melalui dashboard admin.');
+
+    } catch (error) {
+      logger.error('Error getting bank details:', error);
+      
+      // ✅ Specific error handling
+      if (error.message.includes('rekening bank')) {
+        throw error; // Re-throw custom message
+      }
+      
+      throw new Error('Sistem pembayaran bermasalah. Silakan hubungi admin atau coba lagi nanti.');
+    }
+  }
+
+  // ✅ NEW: Get all active bank accounts for customer choice
+  static async getAllActiveBanks() {
+    try {
+      const banks = await BankAccount.find({ is_active: true })
+        .select('bank_name account_number account_name account_type description is_primary')
+        .sort({ is_primary: -1, bank_name: 1 });
+
+      return banks.map(bank => ({
+        id: bank._id,
+        bank_name: bank.bank_name,
+        account_number: bank.account_number,
+        account_name: bank.account_name,
+        account_type: bank.account_type,
+        description: bank.description,
+        is_primary: bank.is_primary
+      }));
+
+    } catch (error) {
+      logger.error('Error getting active banks:', error);
+      return [];
+    }
   }
 
   static calculatePaymentSummary(totalBookingAmount, paymentType) {
