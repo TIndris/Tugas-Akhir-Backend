@@ -35,26 +35,31 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // Determine payment amount based on type
-    let paymentAmount;
-    if (payment_type === PaymentService.PAYMENT_TYPES.DP) {
-      paymentAmount = PaymentService.DP_AMOUNT;
-    } else if (payment_type === PaymentService.PAYMENT_TYPES.FULL) {
-      paymentAmount = parseInt(transfer_amount);
-    } else {
+    // Validate payment type
+    const VALID_PAYMENT_TYPES = ['dp_payment', 'full_payment'];
+
+    if (!VALID_PAYMENT_TYPES.includes(payment_type)) {
       return res.status(400).json({
         status: 'error',
         message: 'Tipe pembayaran tidak valid',
-        valid_types: ['full_payment', 'dp_payment']
+        valid_types: VALID_PAYMENT_TYPES
       });
+    }
+
+    // Determine payment amount based on type
+    let paymentAmount;
+    if (payment_type === 'dp_payment') {
+      paymentAmount = 50000; // ← Fixed DP amount or PaymentService.DP_AMOUNT
+    } else if (payment_type === 'full_payment') {
+      paymentAmount = parseInt(transfer_amount);
     }
 
     // Validate transfer amount matches payment type
     if (parseInt(transfer_amount) !== paymentAmount) {
       return res.status(400).json({
         status: 'error',
-        message: payment_type === PaymentService.PAYMENT_TYPES.DP 
-          ? `DP harus tepat Rp ${PaymentService.DP_AMOUNT.toLocaleString('id-ID')}`
+        message: payment_type === 'dp_payment' 
+          ? `DP harus tepat Rp ${paymentAmount.toLocaleString('id-ID')}`
           : 'Jumlah transfer harus sesuai dengan total booking'
       });
     }
