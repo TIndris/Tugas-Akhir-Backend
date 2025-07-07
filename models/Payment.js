@@ -5,8 +5,7 @@ import {
   validateTransferAmountField,
   validateTransferDateField,
   validateSenderNameField,
-  PAYMENT_TYPES,
-  PAYMENT_STATUSES
+  PAYMENT_TYPES
 } from '../validators/paymentValidators.js';
 
 const paymentSchema = new mongoose.Schema({

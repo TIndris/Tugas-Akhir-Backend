@@ -1,5 +1,3 @@
-import bcrypt from 'bcryptjs';
-
 // Email validation
 export const validateEmail = (email) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
