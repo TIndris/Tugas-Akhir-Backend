@@ -52,7 +52,8 @@ app.use(cors({
     'https://tugas-akhir-backend-ashy.vercel.app', // API self
     'http://localhost:3000',                        // React default
     'http://localhost:5173',                        // Vite default
-    'http://127.0.0.1:3000',                        // Alternative localhost
+    'http://127.0.0.1:3000',
+    'http://10.20.30.249:5500',                        // Alternative localhost
     
     // Tambah domain frontend deploy nanti
     // 'https://tugas-akhir-frontend.vercel.app'
