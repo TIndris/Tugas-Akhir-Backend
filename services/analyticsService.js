@@ -1,6 +1,10 @@
 import moment from 'moment-timezone';
-import { Payment, Booking, Field, User } from '../models/index.js';
-import redisClient from '../config/redis.js';
+// ✅ FIX: Import individual models (sesuai struktur folder Anda)
+import Payment from '../models/Payment.js';
+import Booking from '../models/Booking.js';
+import Field from '../models/Field.js';
+import User from '../models/User.js';
+import { client } from '../config/redis.js';  // ✅ Sesuaikan dengan export redis Anda
 import logger from '../config/logger.js';
 
 class AnalyticsService {
@@ -11,8 +15,17 @@ class AnalyticsService {
     const cacheKey = `analytics:revenue:${period}:${year || 'current'}`;
     
     try {
-      // ✅ Check Redis Cache first (5 minutes)
-      const cached = await redisClient.get(cacheKey);
+      // ✅ Check Redis with proper error handling
+      let cached = null;
+      try {
+        if (client && client.isOpen) {
+          cached = await client.get(cacheKey);
+        }
+      } catch (redisError) {
+        logger.warn('Redis cache read error:', redisError.message);
+        // Continue without cache
+      }
+
       if (cached) {
         logger.info('Revenue report served from cache', { period, year });
         return JSON.parse(cached);
@@ -99,8 +112,15 @@ class AnalyticsService {
         cacheStatus: 'fresh'
       };
 
-      // ✅ Cache for 5 minutes
-      await redisClient.setex(cacheKey, 300, JSON.stringify(result));
+      // ✅ Cache with error handling
+      try {
+        if (client && client.isOpen) {
+          await client.setex(cacheKey, 300, JSON.stringify(result));
+        }
+      } catch (redisError) {
+        logger.warn('Redis cache save error:', redisError.message);
+        // Continue without caching
+      }
       
       logger.info('Revenue report generated and cached', { 
         period, 

@@ -126,7 +126,7 @@ app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
 app.use('/fields', fieldRoutes);
 app.use('/payments', paymentRoutes); 
-app.use('/api/admin/analytics', analyticsRoutes);
+app.use('/analytics', analyticsRoutes);  
 
 // 404 handler
 app.use((req, res) => {

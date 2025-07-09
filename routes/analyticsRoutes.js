@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateToken, authorizeAdmin } from '../middleware/authMiddleware.js';
+import { authenticateToken, restrictTo } from '../middleware/auth.js';
 import {
   getRevenueReport,
   getPopularFieldsReport, 
@@ -10,7 +10,7 @@ import {
 const router = express.Router();
 
 // Apply authentication and admin authorization to all routes
-router.use(authenticateToken, authorizeAdmin);
+router.use(authenticateToken, restrictTo('admin'));
 
 // Analytics endpoints
 router.get('/revenue', getRevenueReport);
