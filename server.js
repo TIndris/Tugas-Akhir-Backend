@@ -18,6 +18,7 @@ import adminRoutes from './routes/adminRoutes.js';
 import bookingRoutes from './routes/bookingRoutes.js';
 import fieldRoutes from './routes/fieldRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
+import analyticsRoutes from './routes/analyticsRoutes.js';
 
 dotenv.config();
 
@@ -125,6 +126,7 @@ app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
 app.use('/fields', fieldRoutes);
 app.use('/payments', paymentRoutes); 
+app.use('/api/admin/analytics', analyticsRoutes);
 
 // 404 handler
 app.use((req, res) => {
