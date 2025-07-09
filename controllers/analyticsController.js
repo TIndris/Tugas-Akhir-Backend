@@ -22,7 +22,7 @@ export const getRevenueReport = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Revenue report error: ${error.message}`, { user: req.user._id });
+    logger.error(`Revenue report error: ${error.message}`);
     res.status(500).json({
       status: 'error', 
       message: 'Gagal membuat laporan revenue'
@@ -42,7 +42,7 @@ export const getPopularFieldsReport = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Popular fields error: ${error.message}`, { user: req.user._id });
+    logger.error(`Popular fields error: ${error.message}`);
     res.status(500).json({
       status: 'error',
       message: 'Gagal membuat laporan lapangan populer'
@@ -62,7 +62,7 @@ export const getPeakHoursReport = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Peak hours error: ${error.message}`, { user: req.user._id });
+    logger.error(`Peak hours error: ${error.message}`);
     res.status(500).json({
       status: 'error',
       message: 'Gagal membuat laporan jam sibuk'
@@ -84,7 +84,7 @@ export const getDashboardAnalytics = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Dashboard analytics error: ${error.message}`, { user: req.user._id });
+    logger.error(`Dashboard analytics error: ${error.message}`);
     res.status(500).json({
       status: 'error',
       message: 'Gagal membuat dashboard analytics'
