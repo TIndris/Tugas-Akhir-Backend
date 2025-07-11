@@ -1,7 +1,7 @@
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
 import moment from 'moment-timezone';
-import mongoose from 'mongoose';  // ✅ ADD THIS IMPORT
+import mongoose from 'mongoose';
 import logger from '../config/logger.js';
 import { client } from '../config/redis.js';
 
@@ -229,8 +229,79 @@ export const getBooking = async (req, res) => {
   }
 };
 
-// Get available slots dengan cache
-export const getAvailableSlots = async (req, res) => {
+// ✅ ADD: Export checkAvailability function
+export const checkAvailability = async (req, res) => {
+  try {
+    const { lapangan, tanggal, jam } = req.query;
+
+    if (!lapangan || !tanggal || !jam) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Parameter lapangan, tanggal, dan jam harus diisi',
+        required_params: ['lapangan', 'tanggal', 'jam']
+      });
+    }
+
+    // Validate field exists
+    const field = await Field.findById(lapangan);
+    if (!field) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Lapangan tidak ditemukan'
+      });
+    }
+
+    // Check if field is available
+    if (field.status !== 'tersedia') {
+      return res.status(400).json({
+        status: 'error',
+        message: `Lapangan sedang ${field.status}`,
+        is_available: false,
+        field_status: field.status
+      });
+    }
+
+    // Check time slot availability
+    const existingBooking = await Booking.findOne({
+      lapangan: lapangan,
+      tanggal_booking: tanggal,
+      jam_booking: jam,
+      status_pemesanan: { $in: ['pending', 'confirmed'] }
+    });
+
+    const isAvailable = !existingBooking;
+
+    res.status(200).json({
+      status: 'success',
+      message: isAvailable ? 'Slot tersedia' : 'Slot sudah dibooking',
+      data: {
+        is_available: isAvailable,
+        field: {
+          id: field._id,
+          name: field.nama,
+          type: field.jenis_lapangan,
+          price: field.harga,
+          status: field.status
+        },
+        slot: {
+          date: tanggal,
+          time: jam,
+          booked_by: existingBooking ? 'User lain' : null
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Check availability error: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengecek ketersediaan'
+    });
+  }
+};
+
+// ✅ RENAME: getAvailableSlots menjadi getAvailability untuk konsistensi
+export const getAvailability = async (req, res) => {
   try {
     const { fieldId, date } = req.query;
     const cacheKey = `availability:${fieldId}:${date}`;
@@ -238,7 +309,7 @@ export const getAvailableSlots = async (req, res) => {
     // Check cache first
     let cachedAvailability = null;
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         cachedAvailability = await client.get(cacheKey);
       }
     } catch (redisError) {
@@ -262,7 +333,7 @@ export const getAvailableSlots = async (req, res) => {
       });
     }
 
-    // ✅ TAMBAHKAN: Check field availability
+    // Check field availability
     if (field.status !== 'tersedia') {
       return res.status(400).json({
         status: 'error',
@@ -272,13 +343,17 @@ export const getAvailableSlots = async (req, res) => {
           fieldType: field.jenis_lapangan,
           status: field.status,
           date: date,
-          slots: [] // Empty slots karena lapangan tidak tersedia
+          slots: []
         }
       });
     }
 
     // Get all booked slots for the date
-    const bookedSlots = await Booking.getBookedSlots(fieldId, date);
+    const bookedSlots = await Booking.find({
+      lapangan: fieldId,
+      tanggal_booking: date,
+      status_pemesanan: { $in: ['pending', 'confirmed'] }
+    }).select('jam_booking');
     
     // Generate all possible time slots
     const allSlots = generateTimeSlots();
@@ -303,9 +378,9 @@ export const getAvailableSlots = async (req, res) => {
       slots: availabilityMap
     };
 
-    // Cache for 2 minutes (short cache for real-time availability)
+    // Cache for 2 minutes
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         await client.setEx(cacheKey, 120, JSON.stringify(responseData));
         logger.info('Availability cached successfully');
       }
@@ -319,7 +394,7 @@ export const getAvailableSlots = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error(`Error getting available slots: ${error.message}`);
+    logger.error(`Error getting availability: ${error.message}`);
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -635,7 +710,7 @@ export const getBookingStatusSummary = async (req, res) => {
 const generateTimeSlots = () => {
   const slots = [];
   const startHour = 7;  // 07:00
-  const endHour = 24;   // 24:00
+  const endHour = 23;   // 23:00
   
   for (let hour = startHour; hour <= endHour; hour++) {
     slots.push({

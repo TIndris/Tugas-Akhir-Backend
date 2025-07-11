@@ -5,7 +5,9 @@ import {
   getBookingById,
   updateBooking,
   deleteBooking,
+  getAllBookings,
   checkAvailability,
+  getAvailability,
   getBookingStatus,
   getBookingStatusSummary
 } from '../controllers/bookingController.js';
@@ -15,11 +17,10 @@ const router = express.Router();
 
 // Public routes
 router.get('/check-availability', checkAvailability);
+router.get('/availability', getAvailability);
 
-// Protected routes - Customer access
+// Protected routes
 router.use(authenticateToken);
-
-// Customer booking management
 router.post('/', createBooking);
 router.get('/my-bookings', getMyBookings);
 router.get('/status-summary', getBookingStatusSummary);
@@ -30,6 +31,6 @@ router.delete('/:id', deleteBooking);
 
 // Admin/Cashier routes
 router.use(restrictTo('admin', 'cashier'));
-// Add admin routes here if needed
+router.get('/admin/all', getAllBookings);
 
 export default router;

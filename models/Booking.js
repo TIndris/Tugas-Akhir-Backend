@@ -168,7 +168,7 @@ bookingSchema.index({ lapangan: 1, tanggal_booking: 1 });
 bookingSchema.index({ pelanggan: 1 });
 bookingSchema.index({ status_pemesanan: 1 });
 
-// Add static method to check availability
+// ✅ ADD: Static method for availability check
 bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   const existingBooking = await this.findOne({
     lapangan: fieldId,
@@ -179,13 +179,13 @@ bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   return !existingBooking;
 };
 
-// Get all bookings for a specific date and field
+// ✅ ADD: Get booked slots for a specific date and field
 bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
   return await this.find({
     lapangan: fieldId,
     tanggal_booking: date,
     status_pemesanan: { $in: ['pending', 'confirmed'] }
-  }).select('jam_booking durasi');
+  }).select('jam_booking pelanggan');
 };
 
 export default mongoose.model('Booking', bookingSchema);
