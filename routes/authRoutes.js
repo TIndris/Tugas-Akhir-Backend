@@ -1,7 +1,7 @@
 import express from 'express';
 import passport from 'passport';
 import jwt from 'jsonwebtoken';
-import { logout, login, register } from '../controllers/authController.js';
+import { logout, login, register, logoutAllSessions } from '../controllers/authController.js';
 import { getProfile, updateProfile } from '../controllers/profileController.js'; // ✅ NEW IMPORT
 import { authenticateToken } from '../middleware/auth.js';
 import { loginLimiter } from '../middleware/adminAuth.js';
@@ -64,5 +64,6 @@ router.get('/status', authenticateToken, (req, res) => {
   });
 });
 router.post('/logout', authenticateToken, logout);
+router.post('/logout-all', authenticateToken, logoutAllSessions);
 
 export default router;

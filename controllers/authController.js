@@ -4,6 +4,7 @@ import logger from '../config/logger.js';
 import { blacklistToken } from '../utils/tokenManager.js';
 
 const loginAttempts = new Map();
+const logoutTimestamps = new Map(); // Track logout timestamps for users
 
 export const logout = async (req, res) => {
   try {
@@ -42,6 +43,38 @@ export const logout = async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Error logging out'
+    });
+  }
+};
+
+export const logoutAllSessions = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userEmail = req.user.email;
+    const userRole = req.user.role;
+
+    logger.info(`Logout all sessions: ${userEmail}`, {
+      role: userRole,
+      action: 'LOGOUT_ALL_SESSIONS'
+    });
+
+    // Add user to logout timestamps to invalidate all existing tokens
+    logoutTimestamps.set(userId.toString(), Date.now());
+
+    // Also blacklist current token
+    blacklistToken(req.token);
+
+    res.clearCookie('jwt');
+    res.status(200).json({
+      status: 'success',
+      message: 'Logged out from all sessions successfully'
+    });
+
+  } catch (error) {
+    logger.error(`Logout all sessions error: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: 'Error logging out from all sessions'
     });
   }
 };
