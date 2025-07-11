@@ -1,7 +1,9 @@
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
-import { client } from '../config/redis.js';
+import moment from 'moment-timezone';
+import mongoose from 'mongoose';  // ✅ ADD THIS IMPORT
 import logger from '../config/logger.js';
+import { client } from '../config/redis.js';
 
 // Create booking dengan cache invalidation
 export const createBooking = async (req, res) => {
@@ -385,6 +387,14 @@ export const getBookingStatus = async (req, res) => {
     const { id } = req.params;
     const userId = req.user._id;
 
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
     // Find booking and check ownership
     const booking = await Booking.findOne({
       _id: id,
@@ -401,12 +411,17 @@ export const getBookingStatus = async (req, res) => {
     }
 
     // Get payment info if exists
-    const Payment = (await import('../models/Payment.js')).default;
-    const payment = await Payment.findOne({ 
-      booking: id 
-    }).sort({ createdAt: -1 });
+    let payment = null;
+    try {
+      const { default: Payment } = await import('../models/Payment.js');
+      payment = await Payment.findOne({ 
+        booking: id 
+      }).sort({ createdAt: -1 });
+    } catch (importError) {
+      logger.warn('Payment model import error:', importError.message);
+    }
 
-    // Calculate status timeline
+    // Calculate simple status timeline
     const statusTimeline = [
       {
         status: 'pending',
@@ -426,7 +441,8 @@ export const getBookingStatus = async (req, res) => {
         status: 'payment_verified',
         label: 'Pembayaran Diverifikasi',
         completed: payment?.status === 'verified',
-        timestamp: payment?.verifiedAtWIB || null,
+        timestamp: payment?.verified_at ? 
+          moment(payment.verified_at).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss') : null,
         description: payment?.status === 'verified' 
           ? `Pembayaran diverifikasi oleh ${booking.kasir?.name || 'Kasir'}`
           : 'Menunggu verifikasi pembayaran dari kasir'
@@ -443,20 +459,35 @@ export const getBookingStatus = async (req, res) => {
       }
     ];
 
-    // Determine current step
+    // Calculate progress
+    const completedSteps = statusTimeline.filter(step => step.completed).length;
     const currentStep = statusTimeline.findIndex(step => !step.completed);
-    const completionPercentage = Math.round(
-      (statusTimeline.filter(step => step.completed).length / statusTimeline.length) * 100
-    );
+    const completionPercentage = Math.round((completedSteps / statusTimeline.length) * 100);
 
-    // Payment summary
-    let paymentSummary = null;
-    if (payment) {
-      const PaymentService = (await import('../services/paymentService.js')).PaymentService;
-      paymentSummary = PaymentService.calculatePaymentSummary(
-        booking.harga,
-        payment.payment_type
-      );
+    // Determine next action
+    let nextAction = { action: 'wait', message: 'Proses sedang berlangsung' };
+    
+    if (booking.status_pemesanan === 'cancelled') {
+      nextAction = { action: 'none', message: 'Booking telah dibatalkan' };
+    } else if (booking.status_pemesanan === 'confirmed') {
+      nextAction = { action: 'none', message: 'Booking sudah terkonfirmasi, siap bermain!' };
+    } else if (!payment) {
+      nextAction = { 
+        action: 'upload_payment', 
+        message: 'Upload bukti pembayaran untuk melanjutkan',
+        endpoint: 'POST /payments'
+      };
+    } else if (payment.status === 'pending') {
+      nextAction = { 
+        action: 'wait_verification', 
+        message: 'Menunggu verifikasi pembayaran dari kasir' 
+      };
+    } else if (payment.status === 'rejected') {
+      nextAction = { 
+        action: 'reupload_payment', 
+        message: `Pembayaran ditolak: ${payment.rejection_reason || 'Alasan tidak disebutkan'}. Silakan upload ulang.`,
+        endpoint: 'POST /payments'
+      };
     }
 
     res.status(200).json({
@@ -477,11 +508,13 @@ export const getBookingStatus = async (req, res) => {
         },
         payment: payment ? {
           id: payment._id,
-          type: payment.payment_type_text,
+          type: payment.payment_type === 'dp_payment' ? 'Pembayaran DP' : 'Pembayaran Lunas',
           amount: payment.amount,
-          status: payment.status_text,
+          status: payment.status === 'verified' ? 'Terverifikasi' : 
+                  payment.status === 'rejected' ? 'Ditolak' : 'Menunggu Verifikasi',
           submittedAt: payment.createdAtWIB,
-          verifiedAt: payment.verifiedAtWIB
+          verifiedAt: payment.verified_at ? 
+            moment(payment.verified_at).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss') : null
         } : null,
         statusTimeline,
         progress: {
@@ -489,16 +522,16 @@ export const getBookingStatus = async (req, res) => {
           totalSteps: statusTimeline.length,
           completionPercentage,
           isCompleted: booking.status_pemesanan === 'confirmed',
-          nextAction: this._getNextAction(booking, payment)
-        },
-        paymentSummary
+          nextAction
+        }
       }
     });
 
   } catch (error) {
     logger.error(`Get booking status error: ${error.message}`, {
       bookingId: req.params.id,
-      userId: req.user._id
+      userId: req.user._id,
+      stack: error.stack
     });
     
     res.status(500).json({
@@ -506,58 +539,6 @@ export const getBookingStatus = async (req, res) => {
       message: 'Terjadi kesalahan saat mengambil status booking'
     });
   }
-};
-
-// Helper function to determine next action
-const _getNextAction = (booking, payment) => {
-  if (booking.status_pemesanan === 'cancelled') {
-    return { action: 'none', message: 'Booking telah dibatalkan' };
-  }
-  
-  if (booking.status_pemesanan === 'confirmed') {
-    return { action: 'none', message: 'Booking sudah terkonfirmasi, siap bermain!' };
-  }
-  
-  if (!payment) {
-    return { 
-      action: 'upload_payment', 
-      message: 'Upload bukti pembayaran untuk melanjutkan',
-      endpoint: 'POST /payments'
-    };
-  }
-  
-  if (payment.status === 'pending') {
-    return { 
-      action: 'wait_verification', 
-      message: 'Menunggu verifikasi pembayaran dari kasir' 
-    };
-  }
-  
-  if (payment.status === 'rejected') {
-    return { 
-      action: 'reupload_payment', 
-      message: `Pembayaran ditolak: ${payment.rejection_reason}. Silakan upload ulang.`,
-      endpoint: 'POST /payments'
-    };
-  }
-  
-  return { action: 'wait', message: 'Proses sedang berlangsung' };
-};
-
-// Helper function to generate time slots
-const generateTimeSlots = () => {
-  const slots = [];
-  const startHour = 7;  // 07:00
-  const endHour = 24;   // 24:00
-  
-  for (let hour = startHour; hour <= endHour; hour++) {
-    slots.push({
-      time: `${hour.toString().padStart(2, '0')}:00`,
-      displayTime: `${hour}:00`
-    });
-  }
-  
-  return slots;
 };
 
 // ============= GET BOOKING STATUS SUMMARY =============
@@ -639,7 +620,8 @@ export const getBookingStatusSummary = async (req, res) => {
 
   } catch (error) {
     logger.error(`Get booking status summary error: ${error.message}`, {
-      userId: req.user._id
+      userId: req.user._id,
+      stack: error.stack
     });
     
     res.status(500).json({
@@ -647,4 +629,20 @@ export const getBookingStatusSummary = async (req, res) => {
       message: 'Terjadi kesalahan saat mengambil ringkasan status'
     });
   }
+};
+
+// Helper function to generate time slots
+const generateTimeSlots = () => {
+  const slots = [];
+  const startHour = 7;  // 07:00
+  const endHour = 24;   // 24:00
+  
+  for (let hour = startHour; hour <= endHour; hour++) {
+    slots.push({
+      time: `${hour.toString().padStart(2, '0')}:00`,
+      displayTime: `${hour}:00`
+    });
+  }
+  
+  return slots;
 };

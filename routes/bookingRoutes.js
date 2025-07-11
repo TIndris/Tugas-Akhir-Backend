@@ -1,10 +1,11 @@
 import express from 'express';
-import { 
+import {
   createBooking,
-  getAllBookings,
-  getBooking,
   getMyBookings,
-  getAvailableSlots,
+  getBookingById,
+  updateBooking,
+  deleteBooking,
+  checkAvailability,
   getBookingStatus,
   getBookingStatusSummary
 } from '../controllers/bookingController.js';
@@ -12,21 +13,23 @@ import { authenticateToken, restrictTo } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Protect all routes
+// Public routes
+router.get('/check-availability', checkAvailability);
+
+// Protected routes - Customer access
 router.use(authenticateToken);
 
-// Routes for customers
-router.post('/', restrictTo('customer'), createBooking);
-router.get('/my-bookings', restrictTo('customer'), getMyBookings);
-router.get('/my-bookings', authenticateToken, getMyBookings);  // ✅ SUDAH ADA
+// Customer booking management
+router.post('/', createBooking);
+router.get('/my-bookings', getMyBookings);
+router.get('/status-summary', getBookingStatusSummary);
+router.get('/:id', getBookingById);
+router.get('/:id/status', getBookingStatus);
+router.patch('/:id', updateBooking);
+router.delete('/:id', deleteBooking);
 
-// Routes for admin/cashier
-router.get('/', restrictTo('admin', 'cashier'), getAllBookings);
-router.get('/:id', restrictTo('admin', 'cashier', 'customer'), getBooking);
-router.get('/status-summary', authenticateToken, getBookingStatusSummary);  // ⭐ NEW
-router.get('/:id/status', authenticateToken, getBookingStatus);  // ⭐ NEW
-
-// Public route for getting available slots
-router.get('/available-slots', getAvailableSlots);
+// Admin/Cashier routes
+router.use(restrictTo('admin', 'cashier'));
+// Add admin routes here if needed
 
 export default router;
