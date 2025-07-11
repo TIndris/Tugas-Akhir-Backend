@@ -721,3 +721,297 @@ const generateTimeSlots = () => {
   
   return slots;
 };
+
+// ============= UPDATE BOOKING =============
+export const updateBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tanggal_booking, jam_booking, durasi, catatan } = req.body;
+    const userId = req.user._id;
+
+    // Find booking and check ownership
+    const booking = await Booking.findOne({
+      _id: id,
+      pelanggan: userId
+    }).populate('lapangan');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Only allow updates if booking is still pending
+    if (booking.status_pemesanan !== 'pending') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking yang sudah dikonfirmasi tidak dapat diubah'
+      });
+    }
+
+    // Validate new booking time if provided
+    if (tanggal_booking && jam_booking) {
+      const field = booking.lapangan;
+      
+      // Check if new time slot is available
+      const conflictBooking = await Booking.findOne({
+        lapangan: field._id,
+        tanggal_booking: tanggal_booking,
+        jam_booking: jam_booking,
+        _id: { $ne: id },
+        status_pemesanan: { $in: ['pending', 'confirmed'] }
+      });
+
+      if (conflictBooking) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Slot waktu sudah dibooking oleh user lain'
+        });
+      }
+
+      // Validate operational hours
+      const bookingHour = parseInt(jam_booking.split(':')[0]);
+      const closeHour = parseInt(field.jam_tutup.split(':')[0]);
+      const openHour = parseInt(field.jam_buka.split(':')[0]);
+
+      if (bookingHour >= closeHour || bookingHour < openHour) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Jam booking harus antara ${field.jam_buka} - ${field.jam_tutup}`
+        });
+      }
+
+      // Check duration doesn't exceed closing time
+      const newDuration = durasi || booking.durasi;
+      if (bookingHour + newDuration > closeHour) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Durasi melebihi jam tutup lapangan (${field.jam_tutup})`
+        });
+      }
+    }
+
+    // Update booking
+    if (tanggal_booking) booking.tanggal_booking = tanggal_booking;
+    if (jam_booking) booking.jam_booking = jam_booking;
+    if (durasi) {
+      booking.durasi = durasi;
+      booking.harga = booking.lapangan.harga * durasi; // Recalculate price
+    }
+    if (catatan !== undefined) booking.catatan = catatan;
+
+    await booking.save();
+
+    // Clear cache
+    try {
+      if (client && client.isOpen) {
+        await client.del(`bookings:${userId}`);
+        await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    logger.info(`Booking updated: ${booking._id}`, {
+      user: userId,
+      changes: { tanggal_booking, jam_booking, durasi, catatan }
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking berhasil diperbarui',
+      data: { booking }
+    });
+
+  } catch (error) {
+    logger.error(`Update booking error: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat memperbarui booking'
+    });
+  }
+};
+
+// ============= DELETE BOOKING =============
+export const deleteBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // Find booking and check ownership
+    const booking = await Booking.findOne({
+      _id: id,
+      pelanggan: userId
+    }).populate('lapangan');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Check if booking can be cancelled
+    if (booking.status_pemesanan === 'confirmed') {
+      // Check if booking is at least 24 hours in future
+      const bookingDateTime = new Date(`${booking.tanggal_booking}T${booking.jam_booking}`);
+      const now = new Date();
+      const hoursDiff = (bookingDateTime - now) / (1000 * 60 * 60);
+
+      if (hoursDiff < 24) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Booking terkonfirmasi hanya bisa dibatalkan minimal 24 jam sebelum jadwal'
+        });
+      }
+    }
+
+    // Check if there are payments associated
+    let hasPayments = false;
+    try {
+      const { default: Payment } = await import('../models/Payment.js');
+      const payments = await Payment.find({ booking: id });
+      hasPayments = payments.length > 0;
+    } catch (importError) {
+      logger.warn('Payment model import error:', importError.message);
+    }
+
+    if (hasPayments && booking.status_pemesanan !== 'pending') {
+      // Don't delete, just mark as cancelled
+      booking.status_pemesanan = 'cancelled';
+      booking.cancelled_at = new Date();
+      booking.cancellation_reason = 'Dibatalkan oleh customer';
+      await booking.save();
+
+      // Clear cache
+      try {
+        if (client && client.isOpen) {
+          await client.del(`bookings:${userId}`);
+          await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
+        }
+      } catch (redisError) {
+        logger.warn('Redis cache clear error:', redisError);
+      }
+
+      logger.info(`Booking cancelled: ${booking._id}`, {
+        user: userId,
+        reason: 'Customer cancellation'
+      });
+
+      return res.status(200).json({
+        status: 'success',
+        message: 'Booking berhasil dibatalkan',
+        data: { booking }
+      });
+    }
+
+    // Safe to delete (no payments or still pending)
+    await Booking.findByIdAndDelete(id);
+
+    // Clear cache
+    try {
+      if (client && client.isOpen) {
+        await client.del(`bookings:${userId}`);
+        await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    logger.info(`Booking deleted: ${id}`, {
+      user: userId,
+      field: booking.lapangan.nama,
+      date: booking.tanggal_booking,
+      time: booking.jam_booking
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking berhasil dihapus'
+    });
+
+  } catch (error) {
+    logger.error(`Delete booking error: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat menghapus booking'
+    });
+  }
+};
+
+// ============= GET BOOKING BY ID (for individual access) =============
+export const getBookingById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    // Build query based on role
+    let query = { _id: id };
+    
+    // Customers can only see their own bookings
+    if (userRole === 'customer') {
+      query.pelanggan = userId;
+    }
+    // Admin and cashier can see all bookings (no additional filter)
+
+    const booking = await Booking.findOne(query)
+      .populate('pelanggan', 'name email')
+      .populate('lapangan', 'nama jenis_lapangan harga')
+      .populate('kasir', 'name');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Get payment information if exists
+    let payments = [];
+    try {
+      const { default: Payment } = await import('../models/Payment.js');
+      payments = await Payment.find({ booking: id }).sort({ createdAt: -1 });
+    } catch (importError) {
+      logger.warn('Payment model import error:', importError.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { 
+        booking,
+        payments: payments.map(payment => ({
+          id: payment._id,
+          type: payment.payment_type,
+          amount: payment.amount,
+          status: payment.status,
+          submittedAt: payment.createdAtWIB,
+          verifiedAt: payment.verified_at ? 
+            moment(payment.verified_at).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss') : null
+        }))
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Get booking by ID error: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil data booking'
+    });
+  }
+};
+
+// Export semua fungsi yang diperlukan
+export {
+  createBooking,
+  getMyBookings,
+  getAllBookings,
+  getBookingById,
+  updateBooking,
+  deleteBooking,
+  checkAvailability,
+  getAvailability,
+  getBookingStatus,
+  getBookingStatusSummary
+};
