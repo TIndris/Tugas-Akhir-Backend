@@ -1,31 +1,9 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
-import logger from '../config/logger.js';  // ← FIXED PATH
+import logger from '../config/logger.js';
 import { blacklistToken } from '../utils/tokenManager.js';
 
 const loginAttempts = new Map();
-
-export const getProfile = async (req, res) => {
-  try {
-    const user = req.user;
-    res.status(200).json({
-      status: 'success',
-      data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          picture: user.picture
-        }
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: 'Error fetching profile'
-    });
-  }
-};
 
 export const logout = async (req, res) => {
   try {

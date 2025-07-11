@@ -1,7 +1,8 @@
 import express from 'express';
 import passport from 'passport';
 import jwt from 'jsonwebtoken';
-import { getProfile, logout, login, register } from '../controllers/authController.js';
+import { logout, login, register } from '../controllers/authController.js';
+import { getProfile, updateProfile } from '../controllers/profileController.js'; // ✅ NEW IMPORT
 import { authenticateToken } from '../middleware/auth.js';
 import { loginLimiter } from '../middleware/adminAuth.js';
 
@@ -46,8 +47,11 @@ router.get('/google/callback',
   }
 );
 
-// Protected routes
+// ✅ NEW: Profile routes
 router.get('/profile', authenticateToken, getProfile);
+router.patch('/profile', authenticateToken, updateProfile);
+
+// Existing protected routes
 router.get('/status', authenticateToken, (req, res) => {
   res.json({
     isAuthenticated: true,

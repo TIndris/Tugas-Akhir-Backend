@@ -33,6 +33,18 @@ const userSchema = new mongoose.Schema({
       message: 'Format email tidak valid'
     }
   },
+  
+  phone: {
+    type: String,
+    trim: true,
+    validate: {
+      validator: function(phone) {
+        if (!phone) return true; // Optional field
+        return /^(\+62|62|0)8[1-9][0-9]{6,9}$/.test(phone);
+      },
+      message: 'Format nomor telepon tidak valid (08xxxxxxxxx)'
+    }
+  },
   password: {
     type: String,
     select: false
