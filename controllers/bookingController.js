@@ -144,41 +144,6 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// Keep confirmBooking function but DON'T export (untuk backward compatibility)
-const confirmBooking = async (req, res) => {
-  try {
-    const booking = await Booking.findById(req.params.id);
-    
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
-      });
-    }
-
-    booking.status_pemesanan = 'confirmed';
-    booking.kasir = req.user._id;
-    booking.konfirmasi_at = new Date();
-    await booking.save();
-
-    logger.info(`Booking confirmed: ${booking._id}`, {
-      kasir: req.user._id,
-      action: 'CONFIRM_BOOKING'
-    });
-
-    res.status(200).json({
-      status: 'success',
-      data: { booking }
-    });
-  } catch (error) {
-    logger.error(`Booking confirmation error: ${error.message}`);
-    res.status(400).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-};
-
 // Mendapatkan semua booking (untuk admin/kasir) - FIXED untuk WIB format
 export const getAllBookings = async (req, res) => {
   try {
@@ -192,34 +157,6 @@ export const getAllBookings = async (req, res) => {
       status: 'success',
       results: bookings.length,
       data: { bookings }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-};
-
-// Mendapatkan booking by ID - FIXED untuk WIB format
-export const getBooking = async (req, res) => {
-  try {
-    // HAPUS .lean() agar virtual fields WIB aktif
-    const booking = await Booking.findById(req.params.id)
-      .populate('pelanggan', 'name email')
-      .populate('lapangan', 'jenis_lapangan nama')
-      .populate('kasir', 'name');
-
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
-      });
-    }
-
-    res.status(200).json({
-      status: 'success',
-      data: { booking }
     });
   } catch (error) {
     res.status(500).json({
@@ -706,22 +643,6 @@ export const getBookingStatusSummary = async (req, res) => {
   }
 };
 
-// Helper function to generate time slots
-const generateTimeSlots = () => {
-  const slots = [];
-  const startHour = 7;  // 07:00
-  const endHour = 23;   // 23:00
-  
-  for (let hour = startHour; hour <= endHour; hour++) {
-    slots.push({
-      time: `${hour.toString().padStart(2, '0')}:00`,
-      displayTime: `${hour}:00`
-    });
-  }
-  
-  return slots;
-};
-
 // ============= UPDATE BOOKING =============
 export const updateBooking = async (req, res) => {
   try {
@@ -1002,16 +923,18 @@ export const getBookingById = async (req, res) => {
   }
 };
 
-// Export semua fungsi yang diperlukan
-export {
-  createBooking,
-  getMyBookings,
-  getAllBookings,
-  getBookingById,
-  updateBooking,
-  deleteBooking,
-  checkAvailability,
-  getAvailability,
-  getBookingStatus,
-  getBookingStatusSummary
+// Helper function to generate time slots
+const generateTimeSlots = () => {
+  const slots = [];
+  const startHour = 7;  // 07:00
+  const endHour = 23;   // 23:00
+  
+  for (let hour = startHour; hour <= endHour; hour++) {
+    slots.push({
+      time: `${hour.toString().padStart(2, '0')}:00`,
+      displayTime: `${hour}:00`
+    });
+  }
+  
+  return slots;
 };
