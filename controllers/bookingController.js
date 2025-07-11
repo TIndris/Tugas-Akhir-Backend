@@ -379,6 +379,171 @@ export const getMyBookings = async (req, res) => {
   }
 };
 
+// ============= GET BOOKING STATUS =============
+export const getBookingStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // Find booking and check ownership
+    const booking = await Booking.findOne({
+      _id: id,
+      pelanggan: userId
+    })
+    .populate('lapangan', 'nama jenis_lapangan')
+    .populate('kasir', 'name');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Get payment info if exists
+    const Payment = (await import('../models/Payment.js')).default;
+    const payment = await Payment.findOne({ 
+      booking: id 
+    }).sort({ createdAt: -1 });
+
+    // Calculate status timeline
+    const statusTimeline = [
+      {
+        status: 'pending',
+        label: 'Booking Dibuat',
+        completed: true,
+        timestamp: booking.createdAtWIB,
+        description: 'Booking berhasil dibuat, menunggu pembayaran'
+      },
+      {
+        status: 'payment_uploaded',
+        label: 'Pembayaran Diupload',
+        completed: !!payment,
+        timestamp: payment ? payment.createdAtWIB : null,
+        description: payment ? 'Bukti pembayaran berhasil diupload' : 'Menunggu upload bukti pembayaran'
+      },
+      {
+        status: 'payment_verified',
+        label: 'Pembayaran Diverifikasi',
+        completed: payment?.status === 'verified',
+        timestamp: payment?.verifiedAtWIB || null,
+        description: payment?.status === 'verified' 
+          ? `Pembayaran diverifikasi oleh ${booking.kasir?.name || 'Kasir'}`
+          : 'Menunggu verifikasi pembayaran dari kasir'
+      },
+      {
+        status: 'booking_confirmed',
+        label: 'Booking Terkonfirmasi',
+        completed: booking.status_pemesanan === 'confirmed',
+        timestamp: booking.konfirmasi_at ? 
+          moment(booking.konfirmasi_at).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss') : null,
+        description: booking.status_pemesanan === 'confirmed'
+          ? 'Booking terkonfirmasi, siap untuk bermain'
+          : 'Menunggu konfirmasi booking'
+      }
+    ];
+
+    // Determine current step
+    const currentStep = statusTimeline.findIndex(step => !step.completed);
+    const completionPercentage = Math.round(
+      (statusTimeline.filter(step => step.completed).length / statusTimeline.length) * 100
+    );
+
+    // Payment summary
+    let paymentSummary = null;
+    if (payment) {
+      const PaymentService = (await import('../services/paymentService.js')).PaymentService;
+      paymentSummary = PaymentService.calculatePaymentSummary(
+        booking.harga,
+        payment.payment_type
+      );
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Status booking berhasil diambil',
+      data: {
+        booking: {
+          id: booking._id,
+          fieldName: booking.lapangan.nama,
+          fieldType: booking.lapangan.jenis_lapangan,
+          date: booking.tanggal_bookingWIB,
+          time: booking.jam_booking,
+          duration: booking.durasi,
+          price: booking.harga,
+          status: booking.status_pemesanan,
+          paymentStatus: booking.payment_status,
+          createdAt: booking.createdAtWIB
+        },
+        payment: payment ? {
+          id: payment._id,
+          type: payment.payment_type_text,
+          amount: payment.amount,
+          status: payment.status_text,
+          submittedAt: payment.createdAtWIB,
+          verifiedAt: payment.verifiedAtWIB
+        } : null,
+        statusTimeline,
+        progress: {
+          currentStep: currentStep === -1 ? statusTimeline.length : currentStep,
+          totalSteps: statusTimeline.length,
+          completionPercentage,
+          isCompleted: booking.status_pemesanan === 'confirmed',
+          nextAction: this._getNextAction(booking, payment)
+        },
+        paymentSummary
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Get booking status error: ${error.message}`, {
+      bookingId: req.params.id,
+      userId: req.user._id
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil status booking'
+    });
+  }
+};
+
+// Helper function to determine next action
+const _getNextAction = (booking, payment) => {
+  if (booking.status_pemesanan === 'cancelled') {
+    return { action: 'none', message: 'Booking telah dibatalkan' };
+  }
+  
+  if (booking.status_pemesanan === 'confirmed') {
+    return { action: 'none', message: 'Booking sudah terkonfirmasi, siap bermain!' };
+  }
+  
+  if (!payment) {
+    return { 
+      action: 'upload_payment', 
+      message: 'Upload bukti pembayaran untuk melanjutkan',
+      endpoint: 'POST /payments'
+    };
+  }
+  
+  if (payment.status === 'pending') {
+    return { 
+      action: 'wait_verification', 
+      message: 'Menunggu verifikasi pembayaran dari kasir' 
+    };
+  }
+  
+  if (payment.status === 'rejected') {
+    return { 
+      action: 'reupload_payment', 
+      message: `Pembayaran ditolak: ${payment.rejection_reason}. Silakan upload ulang.`,
+      endpoint: 'POST /payments'
+    };
+  }
+  
+  return { action: 'wait', message: 'Proses sedang berlangsung' };
+};
+
 // Helper function to generate time slots
 const generateTimeSlots = () => {
   const slots = [];
@@ -393,4 +558,93 @@ const generateTimeSlots = () => {
   }
   
   return slots;
+};
+
+// ============= GET BOOKING STATUS SUMMARY =============
+export const getBookingStatusSummary = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Get booking counts by status
+    const statusCounts = await Booking.aggregate([
+      { $match: { pelanggan: userId } },
+      {
+        $group: {
+          _id: '$status_pemesanan',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$harga' }
+        }
+      }
+    ]);
+
+    // Get payment status counts
+    const paymentCounts = await Booking.aggregate([
+      { $match: { pelanggan: userId } },
+      {
+        $group: {
+          _id: '$payment_status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Get recent bookings (last 5)
+    const recentBookings = await Booking.find({ pelanggan: userId })
+      .populate('lapangan', 'nama jenis_lapangan')
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    // Format status summary
+    const statusSummary = {
+      pending: statusCounts.find(s => s._id === 'pending')?.count || 0,
+      confirmed: statusCounts.find(s => s._id === 'confirmed')?.count || 0,
+      completed: statusCounts.find(s => s._id === 'completed')?.count || 0,
+      cancelled: statusCounts.find(s => s._id === 'cancelled')?.count || 0
+    };
+
+    const paymentSummary = {
+      no_payment: paymentCounts.find(p => p._id === 'no_payment')?.count || 0,
+      pending_payment: paymentCounts.find(p => p._id === 'pending_payment')?.count || 0,
+      dp_confirmed: paymentCounts.find(p => p._id === 'dp_confirmed')?.count || 0,
+      fully_paid: paymentCounts.find(p => p._id === 'fully_paid')?.count || 0
+    };
+
+    const totalBookings = Object.values(statusSummary).reduce((sum, count) => sum + count, 0);
+    const totalSpent = statusCounts.reduce((sum, status) => sum + (status.totalAmount || 0), 0);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Ringkasan status booking berhasil diambil',
+      data: {
+        summary: {
+          totalBookings,
+          totalSpent,
+          activeBookings: statusSummary.pending + statusSummary.confirmed,
+          completedBookings: statusSummary.completed
+        },
+        statusBreakdown: statusSummary,
+        paymentBreakdown: paymentSummary,
+        recentBookings: recentBookings.map(booking => ({
+          id: booking._id,
+          fieldName: booking.lapangan.nama,
+          date: booking.tanggal_bookingWIB,
+          time: booking.jam_booking,
+          status: booking.status_pemesanan,
+          paymentStatus: booking.payment_status,
+          amount: booking.harga
+        })),
+        lastUpdated: moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Get booking status summary error: ${error.message}`, {
+      userId: req.user._id
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil ringkasan status'
+    });
+  }
 };
