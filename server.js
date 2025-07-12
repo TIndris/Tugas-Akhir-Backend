@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import moment from 'moment-timezone';
+import multer from 'multer';  // ✅ ADD multer import
 
 // Import configurations
 import connectDB from './config/db.js';
@@ -47,25 +48,75 @@ app.use(helmet({
 }));
 app.use(mongoSanitize());
 
-// CORS - Support frontend development
+// ✅ UPDATED CORS - Public API (allow all origins)
 app.use(cors({
-  origin: [
-    'https://tugas-akhir-backend-ashy.vercel.app', // API self
-    'http://localhost:3000',                        // React default
-    'http://localhost:5173',     
-    
-    // Tambah domain frontend deploy nanti
-    // 'https://tugas-akhir-frontend.vercel.app'
-  ],
+  origin: true,  // Allow any origin/domain
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'
-  ]
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Access-Control-Request-Method',
+    'Access-Control-Request-Headers'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
 
-// Body parser
+// Handle preflight requests
+app.options('*', cors());
+
+// ✅ UPDATED Body parser - Support JSON, URL-encoded, and Form Data
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// ✅ ADD Form Data Support with Multer
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB file limit
+    fieldSize: 1024 * 1024,     // 1MB per field
+    fields: 20,                 // Max 20 fields
+    files: 5                    // Max 5 files per request
+  },
+  fileFilter: (req, file, cb) => {
+    // Allow common file types
+    const allowedTypes = [
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+      'application/pdf', 'text/plain', 'image/svg+xml'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${file.mimetype} not allowed`), false);
+    }
+  }
+});
+
+// ✅ ADD Form data middleware (auto-detect content type)
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'];
+  
+  // Check if request has multipart/form-data
+  if (contentType && contentType.includes('multipart/form-data')) {
+    upload.any()(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Form data error: ${err.message}`,
+          code: 'FORM_DATA_ERROR'
+        });
+      }
+      next();
+    });
+  } else {
+    // Continue normally for JSON/URL-encoded requests
+    next();
+  }
+});
 
 // Logging middleware (simplified for production)
 if (process.env.NODE_ENV !== 'production') {
@@ -112,6 +163,13 @@ app.get('/', (req, res) => {
         'GET /payments/pending - View pending payments',
         'PATCH /payments/:id/approve - Approve payment & auto-confirm booking',
         'PATCH /payments/:id/reject - Reject payment & reset booking'
+      ],
+      features: [
+        '✅ Public API - Accessible from any origin',
+        '✅ Form Data Support - File uploads enabled',
+        '✅ JSON & URL-encoded support',
+        '✅ Multi-role authentication',
+        '✅ Rate limiting & security middleware'
       ]
     }
   });
