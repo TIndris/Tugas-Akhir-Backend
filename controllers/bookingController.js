@@ -181,17 +181,14 @@ export const getAllBookingsForCashier = async (req, res) => {
     // Build filter
     const filter = {};
     
-    // Filter by booking status
     if (status && status !== 'all') {
       filter.status_pemesanan = status;
     }
     
-    // Filter by payment status
     if (payment_status && payment_status !== 'all') {
       filter.payment_status = payment_status;
     }
 
-    // Filter by date range
     if (date_from || date_to) {
       filter.tanggal_booking = {};
       if (date_from) {
@@ -202,7 +199,7 @@ export const getAllBookingsForCashier = async (req, res) => {
       }
     }
 
-    // Build aggregation pipeline
+    // ✅ FIXED: Handle null lapangan gracefully
     let pipeline = [
       {
         $lookup: {
@@ -221,7 +218,13 @@ export const getAllBookingsForCashier = async (req, res) => {
           as: 'field'
         }
       },
-      { $unwind: '$field' },
+      // ✅ FIX: Use $unwind with preserveNullAndEmptyArrays
+      { 
+        $unwind: { 
+          path: '$field', 
+          preserveNullAndEmptyArrays: true  // ✅ Keep documents even if no field
+        }
+      },
       {
         $lookup: {
           from: 'payments',
@@ -240,7 +243,8 @@ export const getAllBookingsForCashier = async (req, res) => {
             { 'customer.name': { $regex: search, $options: 'i' } },
             { 'customer.email': { $regex: search, $options: 'i' } },
             { 'field.nama': { $regex: search, $options: 'i' } },
-            { 'field.jenis_lapangan': { $regex: search, $options: 'i' } }
+            { 'field.jenis_lapangan': { $regex: search, $options: 'i' } },
+            { 'jenis_lapangan': { $regex: search, $options: 'i' } }  // ✅ Search in booking field too
           ]
         }
       });
@@ -250,7 +254,10 @@ export const getAllBookingsForCashier = async (req, res) => {
     if (field_type && field_type !== 'all') {
       pipeline.push({
         $match: {
-          'field.jenis_lapangan': field_type
+          $or: [
+            { 'field.jenis_lapangan': field_type },
+            { 'jenis_lapangan': field_type }  // ✅ Check both field and booking type
+          ]
         }
       });
     }
@@ -266,7 +273,7 @@ export const getAllBookingsForCashier = async (req, res) => {
     // Execute aggregation
     const bookings = await Booking.aggregate(pipeline);
 
-    // Format response for kasir view
+    // ✅ FIXED: Format response handling null fields
     const formattedBookings = bookings.map(booking => {
       const latestPayment = booking.payment.length > 0 
         ? booking.payment.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
@@ -280,9 +287,10 @@ export const getAllBookingsForCashier = async (req, res) => {
           phone: booking.customer.phone || 'Tidak tersedia'
         },
         field: {
-          name: booking.field.nama,
-          type: booking.field.jenis_lapangan,
-          price: booking.field.harga
+          // ✅ Handle null lapangan
+          name: booking.field?.nama || 'Lapangan tidak diketahui',
+          type: booking.field?.jenis_lapangan || booking.jenis_lapangan || 'Jenis tidak diketahui',
+          price: booking.field?.harga || 0
         },
         booking_details: {
           date: moment(booking.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY'),
