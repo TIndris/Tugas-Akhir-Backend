@@ -59,3 +59,25 @@ export const restrictTo = (...roles) => {
     next();
   };
 };
+
+// ADD: Enhanced middleware for cashier operations
+export const requireCashierOrAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: 'error',
+      message: 'Please login first'
+    });
+  }
+
+  const userRole = req.user.role;
+  
+  if (userRole !== 'cashier' && userRole !== 'admin') {
+    return res.status(403).json({
+      status: 'error',
+      message: 'Access denied. Cashier or Admin role required',
+      user_role: userRole
+    });
+  }
+
+  next();
+};

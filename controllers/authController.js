@@ -182,7 +182,7 @@ export const register = async (req, res) => {
       action: 'REGISTER_SUCCESS' 
     });
 
-    // Generate token
+    // rate token
     const token = jwt.sign(
       { id: user._id },
       process.env.SESSION_SECRET,

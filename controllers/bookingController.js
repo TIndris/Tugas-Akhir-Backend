@@ -166,6 +166,218 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
+// ADD: Enhanced getAllBookings for cashier with filtering
+export const getAllBookingsForCashier = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      status, 
+      payment_status,
+      date_from, 
+      date_to,
+      search,
+      field_type 
+    } = req.query;
+
+    // Build filter
+    const filter = {};
+    
+    // Filter by booking status
+    if (status && status !== 'all') {
+      filter.status_pemesanan = status;
+    }
+    
+    // Filter by payment status
+    if (payment_status && payment_status !== 'all') {
+      filter.payment_status = payment_status;
+    }
+
+    // Filter by date range
+    if (date_from || date_to) {
+      filter.tanggal_booking = {};
+      if (date_from) {
+        filter.tanggal_booking.$gte = new Date(date_from);
+      }
+      if (date_to) {
+        filter.tanggal_booking.$lte = new Date(date_to);
+      }
+    }
+
+    // Filter by field type
+    if (field_type && field_type !== 'all') {
+      filter.jenis_lapangan = field_type;
+    }
+
+    // Calculate pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Build aggregation pipeline for search
+    let pipeline = [
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'pelanggan',
+          foreignField: '_id',
+          as: 'customer'
+        }
+      },
+      { $unwind: '$customer' },
+      {
+        $lookup: {
+          from: 'fields',
+          localField: 'lapangan',
+          foreignField: '_id',
+          as: 'field'
+        }
+      },
+      { $unwind: '$field' },
+      {
+        $lookup: {
+          from: 'payments',
+          localField: '_id',
+          foreignField: 'booking',
+          as: 'payment'
+        }
+      }
+    ];
+
+    // Add search filter
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'customer.name': { $regex: search, $options: 'i' } },
+            { 'customer.email': { $regex: search, $options: 'i' } },
+            { 'field.nama': { $regex: search, $options: 'i' } },
+            { 'field.jenis_lapangan': { $regex: search, $options: 'i' } }
+          ]
+        }
+      });
+    }
+
+    // Add main filters
+    if (Object.keys(filter).length > 0) {
+      pipeline.push({ $match: filter });
+    }
+
+    // Add sorting
+    pipeline.push({ $sort: { createdAt: -1 } });
+
+    // Execute aggregation with pagination
+    const [bookings, totalCount] = await Promise.all([
+      Booking.aggregate([
+        ...pipeline,
+        { $skip: skip },
+        { $limit: parseInt(limit) }
+      ]),
+      Booking.aggregate([
+        ...pipeline,
+        { $count: 'total' }
+      ])
+    ]);
+
+    const total = totalCount[0]?.total || 0;
+
+    // Format response for kasir view
+    const formattedBookings = bookings.map(booking => {
+      const latestPayment = booking.payment.length > 0 
+        ? booking.payment.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
+        : null;
+
+      return {
+        id: booking._id,
+        customer: {
+          name: booking.customer.name,
+          email: booking.customer.email,
+          phone: booking.customer.phone || 'Tidak tersedia'
+        },
+        field: {
+          name: booking.field.nama,
+          type: booking.field.jenis_lapangan,
+          price: booking.field.harga
+        },
+        booking_details: {
+          date: moment(booking.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY'),
+          time: booking.jam_booking,
+          duration: booking.durasi,
+          total_price: booking.harga
+        },
+        status: {
+          booking: booking.status_pemesanan,
+          payment: booking.payment_status
+        },
+        payment_info: latestPayment ? {
+          id: latestPayment._id,
+          type: latestPayment.payment_type,
+          amount: latestPayment.amount,
+          status: latestPayment.status,
+          submitted_at: moment(latestPayment.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'),
+          has_proof: !!latestPayment.payment_proof
+        } : null,
+        timestamps: {
+          created: moment(booking.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'),
+          updated: moment(booking.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
+        }
+      };
+    });
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(total / parseInt(limit));
+
+    // Log kasir activity
+    logger.info(`Kasir ${req.user.email} viewed all bookings`, {
+      role: req.user.role,
+      filters: filter,
+      search_term: search || 'none',
+      total_results: total,
+      page: parseInt(page),
+      action: 'VIEW_ALL_BOOKINGS'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Data booking berhasil diambil',
+      data: {
+        bookings: formattedBookings,
+        pagination: {
+          current_page: parseInt(page),
+          total_pages: totalPages,
+          total_items: total,
+          items_per_page: parseInt(limit),
+          has_next: parseInt(page) < totalPages,
+          has_prev: parseInt(page) > 1
+        },
+        filters_applied: {
+          status: status || 'all',
+          payment_status: payment_status || 'all',
+          field_type: field_type || 'all',
+          date_range: date_from && date_to ? `${date_from} to ${date_to}` : 'all',
+          search: search || 'none'
+        },
+        summary: {
+          total_bookings: total,
+          pending_bookings: formattedBookings.filter(b => b.status.booking === 'pending').length,
+          confirmed_bookings: formattedBookings.filter(b => b.status.booking === 'confirmed').length,
+          pending_payments: formattedBookings.filter(b => b.status.payment === 'pending_payment').length
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Error getting all bookings for kasir: ${error.message}`, {
+      userId: req.user._id,
+      role: req.user.role,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil data booking'
+    });
+  }
+};
+
 // ✅ ADD: Export checkAvailability function
 export const checkAvailability = async (req, res) => {
   try {

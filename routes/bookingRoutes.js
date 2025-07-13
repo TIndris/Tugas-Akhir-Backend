@@ -6,12 +6,13 @@ import {
   updateBooking,
   deleteBooking,
   getAllBookings,
+  getAllBookingsForCashier, 
   checkAvailability,
   getAvailability,
   getBookingStatus,
   getBookingStatusSummary
 } from '../controllers/bookingController.js';
-import { authenticateToken, restrictTo } from '../middleware/auth.js';
+import { authenticateToken, restrictTo, requireCashierOrAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -34,7 +35,12 @@ router.patch('/:id', updateBooking);
 router.delete('/:id', deleteBooking);
 
 // ✅ ADMIN/CASHIER ROUTES
-router.use(restrictTo('admin', 'cashier'));
+router.use(requireCashierOrAdmin); // Apply to routes below
+
+// ✅ ADD: Enhanced kasir endpoint
+router.get('/kasir/all-bookings', getAllBookingsForCashier);
+
+// ✅ EXISTING: Admin endpoint (keep for backward compatibility)
 router.get('/admin/all', getAllBookings);
 
 export default router;
