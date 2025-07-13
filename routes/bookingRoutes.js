@@ -37,8 +37,8 @@ router.delete('/:id', deleteBooking);
 // ✅ ADMIN/CASHIER ROUTES
 router.use(requireCashierOrAdmin); // Apply to routes below
 
-// ✅ ADD: Enhanced kasir endpoint
-router.get('/kasir/all-bookings', getAllBookingsForCashier);
+// ✅ ADD: Simple kasir endpoint (no pagination)
+router.get('/kasir/all', getAllBookingsForCashier);
 
 // ✅ EXISTING: Admin endpoint (keep for backward compatibility)
 router.get('/admin/all', getAllBookings);

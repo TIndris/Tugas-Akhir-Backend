@@ -60,7 +60,7 @@ export const restrictTo = (...roles) => {
   };
 };
 
-// ADD: Enhanced middleware for cashier operations
+// ADD: Middleware for cashier operations
 export const requireCashierOrAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({

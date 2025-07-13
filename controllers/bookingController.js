@@ -170,8 +170,6 @@ export const getAllBookings = async (req, res) => {
 export const getAllBookingsForCashier = async (req, res) => {
   try {
     const { 
-      page = 1, 
-      limit = 20, 
       status, 
       payment_status,
       date_from, 
@@ -204,15 +202,7 @@ export const getAllBookingsForCashier = async (req, res) => {
       }
     }
 
-    // Filter by field type
-    if (field_type && field_type !== 'all') {
-      filter.jenis_lapangan = field_type;
-    }
-
-    // Calculate pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Build aggregation pipeline for search
+    // Build aggregation pipeline
     let pipeline = [
       {
         $lookup: {
@@ -256,28 +246,25 @@ export const getAllBookingsForCashier = async (req, res) => {
       });
     }
 
+    // Add field type filter
+    if (field_type && field_type !== 'all') {
+      pipeline.push({
+        $match: {
+          'field.jenis_lapangan': field_type
+        }
+      });
+    }
+
     // Add main filters
     if (Object.keys(filter).length > 0) {
       pipeline.push({ $match: filter });
     }
 
-    // Add sorting
+    // Add sorting (newest first)
     pipeline.push({ $sort: { createdAt: -1 } });
 
-    // Execute aggregation with pagination
-    const [bookings, totalCount] = await Promise.all([
-      Booking.aggregate([
-        ...pipeline,
-        { $skip: skip },
-        { $limit: parseInt(limit) }
-      ]),
-      Booking.aggregate([
-        ...pipeline,
-        { $count: 'total' }
-      ])
-    ]);
-
-    const total = totalCount[0]?.total || 0;
+    // Execute aggregation
+    const bookings = await Booking.aggregate(pipeline);
 
     // Format response for kasir view
     const formattedBookings = bookings.map(booking => {
@@ -322,16 +309,22 @@ export const getAllBookingsForCashier = async (req, res) => {
       };
     });
 
-    // Calculate pagination info
-    const totalPages = Math.ceil(total / parseInt(limit));
+    // Calculate summary stats
+    const summary = {
+      total_bookings: formattedBookings.length,
+      pending_bookings: formattedBookings.filter(b => b.status.booking === 'pending').length,
+      confirmed_bookings: formattedBookings.filter(b => b.status.booking === 'confirmed').length,
+      cancelled_bookings: formattedBookings.filter(b => b.status.booking === 'cancelled').length,
+      pending_payments: formattedBookings.filter(b => b.status.payment === 'pending_payment').length,
+      approved_payments: formattedBookings.filter(b => b.status.payment === 'dp_confirmed' || b.status.payment === 'fully_paid').length
+    };
 
     // Log kasir activity
     logger.info(`Kasir ${req.user.email} viewed all bookings`, {
       role: req.user.role,
       filters: filter,
       search_term: search || 'none',
-      total_results: total,
-      page: parseInt(page),
+      total_results: formattedBookings.length,
       action: 'VIEW_ALL_BOOKINGS'
     });
 
@@ -340,14 +333,6 @@ export const getAllBookingsForCashier = async (req, res) => {
       message: 'Data booking berhasil diambil',
       data: {
         bookings: formattedBookings,
-        pagination: {
-          current_page: parseInt(page),
-          total_pages: totalPages,
-          total_items: total,
-          items_per_page: parseInt(limit),
-          has_next: parseInt(page) < totalPages,
-          has_prev: parseInt(page) > 1
-        },
         filters_applied: {
           status: status || 'all',
           payment_status: payment_status || 'all',
@@ -355,12 +340,7 @@ export const getAllBookingsForCashier = async (req, res) => {
           date_range: date_from && date_to ? `${date_from} to ${date_to}` : 'all',
           search: search || 'none'
         },
-        summary: {
-          total_bookings: total,
-          pending_bookings: formattedBookings.filter(b => b.status.booking === 'pending').length,
-          confirmed_bookings: formattedBookings.filter(b => b.status.booking === 'confirmed').length,
-          pending_payments: formattedBookings.filter(b => b.status.payment === 'pending_payment').length
-        }
+        summary
       }
     });
 
