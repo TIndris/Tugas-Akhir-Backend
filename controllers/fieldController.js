@@ -2,84 +2,41 @@ import Field from '../models/Field.js';
 import { client } from '../config/redis.js';
 import logger from '../config/logger.js';  
 import mongoose from 'mongoose';
+import { FieldService } from '../services/fieldService.js';
 
 export const createField = async (req, res) => {
   try {
     console.log('=== CREATE FIELD DEBUG ===');
-    console.log('Content-Type:', req.get('content-type'));
     console.log('req.body:', req.body);
     console.log('req.file:', req.file);
-    console.log('Body keys:', Object.keys(req.body || {}));
     
-    const { nama, jenis_lapangan, jam_buka, jam_tutup, harga } = req.body;
-    
-    // Validate required fields from form-data
-    if (!nama || !jenis_lapangan || !jam_buka || !jam_tutup || !harga) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Semua field harus diisi',
-        error: {
-          code: 'MISSING_REQUIRED_FIELDS',
-          missingFields: {
-            nama: !nama,
-            jenis_lapangan: !jenis_lapangan,
-            jam_buka: !jam_buka,
-            jam_tutup: !jam_tutup,
-            harga: !harga
-          }
-        }
-      });
-    }
-    
-    // Validate required file upload
+    // ✅ KEEP: File upload validation (Controller responsibility)
     if (!req.file || !req.file.path) {
       return res.status(400).json({
         status: 'error',
         message: 'Gambar lapangan harus diupload',
         error: {
           code: 'FILE_REQUIRED',
-          field: 'gambar',
-          debug: {
-            hasReqFile: !!req.file,
-            filePath: req.file?.path,
-            fileKeys: req.file ? Object.keys(req.file) : null
-          }
+          field: 'gambar'
         }
       });
     }
 
-    const gambar = req.file.path; // Cloudinary URL
+    const gambar = req.file.path;
     
-    console.log('File uploaded to:', gambar);
-
-    // Check if field name already exists
-    const existingField = await Field.findOne({ nama: nama.trim() });
-    if (existingField) {
-      return res.status(409).json({
-        status: 'error',
-        message: 'Nama lapangan sudah digunakan',
-        error: {
-          code: 'DUPLICATE_FIELD_NAME',
-          field: 'nama',
-          value: nama
-        }
-      });
-    }
-
-    // Create field dengan data yang sudah divalidasi
+    // ✅ MOVED TO SERVICE: Field validation
+    const validatedData = await FieldService.validateFieldCreation(req.body);
+    
+    // ✅ KEEP: Database operation with file path
     const field = await Field.create({
-      nama: nama.trim(),
-      jenis_lapangan: jenis_lapangan.trim(),
-      jam_buka: jam_buka.trim(),
-      jam_tutup: jam_tutup.trim(),
-      harga: parseInt(harga),
+      ...validatedData,
       gambar,
       createdBy: req.user._id
     });
 
     console.log('Field created successfully:', field._id);
 
-    // Clear cache
+    // ✅ KEEP: Cache management
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -90,6 +47,7 @@ export const createField = async (req, res) => {
       logger.warn('Redis cache clear error:', redisError);
     }
 
+    // ✅ KEEP: Response formatting
     logger.info(`Field created: ${field._id}`, {
       role: req.user.role,
       action: 'CREATE_FIELD'
@@ -100,6 +58,7 @@ export const createField = async (req, res) => {
       message: 'Lapangan berhasil dibuat',
       data: { field }
     });
+    
   } catch (error) {
     console.error('=== CREATE FIELD ERROR ===');
     console.error('Error:', error);
@@ -108,7 +67,7 @@ export const createField = async (req, res) => {
       action: 'CREATE_FIELD_ERROR'
     });
 
-    // Handle MongoDB duplicate key error
+    // ✅ KEEP: Error handling
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       const value = error.keyValue[field];
@@ -124,7 +83,6 @@ export const createField = async (req, res) => {
       });
     }
 
-    // Handle validation errors
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,
@@ -143,11 +101,7 @@ export const createField = async (req, res) => {
 
     return res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan internal server',
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
-      }
+      message: error.message
     });
   }
 };
@@ -156,7 +110,7 @@ export const updateField = async (req, res) => {
   try {
     const fieldId = req.params.id;
     
-    // Check if we have any data to process
+    // ✅ KEEP: Input validation
     const hasFormData = req.body && Object.keys(req.body).length > 0;
     const hasFile = req.file && req.file.path;
     
@@ -167,7 +121,7 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // Validate field ID
+    // ✅ KEEP: ID validation
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
@@ -175,19 +129,9 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // Get current field
-    const currentField = await Field.findById(fieldId);
-    if (!currentField) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Lapangan tidak ditemukan'
-      });
-    }
-
-    // Process update data
+    // ✅ KEEP: Process form data (Controller responsibility)
     const updateData = {};
     
-    // Handle text fields dengan validasi yang lebih ketat
     if (hasFormData) {
       if (req.body.nama && req.body.nama.trim()) {
         updateData.nama = req.body.nama.trim();
@@ -212,12 +156,10 @@ export const updateField = async (req, res) => {
       }
     }
     
-    // Handle file upload
     if (hasFile) {
       updateData.gambar = req.file.path;
     }
 
-    // Validate we have data to update
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         status: 'error',
@@ -225,32 +167,17 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // Check for duplicate name
-    if (updateData.nama && updateData.nama !== currentField.nama) {
-      const existingField = await Field.findOne({ 
-        nama: updateData.nama, 
-        _id: { $ne: fieldId } 
-      });
-      
-      if (existingField) {
-        return res.status(409).json({
-          status: 'error',
-          message: 'Nama lapangan sudah digunakan'
-        });
-      }
-    }
+    // ✅ MOVED TO SERVICE: Business validation
+    const currentField = await FieldService.validateFieldUpdate(fieldId, updateData);
 
-    // Update field
+    // ✅ KEEP: Database operation
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
-      { 
-        new: true, 
-        runValidators: true 
-      }
+      { new: true, runValidators: true }
     );
 
-    // Clear cache
+    // ✅ KEEP: Cache management and response
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -258,7 +185,7 @@ export const updateField = async (req, res) => {
         await client.del('fields:available');
       }
     } catch (redisError) {
-      // Silent cache error
+      logger.warn('Redis cache clear error:', redisError);
     }
 
     logger.info(`Field updated: ${field._id}`, {
@@ -280,7 +207,6 @@ export const updateField = async (req, res) => {
       fieldId: req.params.id
     });
 
-    // Handle validation errors
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,
@@ -294,7 +220,6 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // Handle duplicate key errors
     if (error.code === 11000) {
       return res.status(409).json({
         status: 'error',
@@ -304,7 +229,7 @@ export const updateField = async (req, res) => {
 
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat memperbarui lapangan'
+      message: error.message
     });
   }
 };

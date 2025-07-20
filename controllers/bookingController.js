@@ -1,3 +1,5 @@
+// controllers/bookingController.js - FIXED (Remove duplicates)
+import { BookingService } from '../services/bookingService.js';
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
 import moment from 'moment-timezone';
@@ -9,115 +11,28 @@ import { client } from '../config/redis.js';
 export const createBooking = async (req, res) => {
   try {
     const { lapangan_id, tanggal_booking, jam_booking, durasi } = req.body;
-
-    // Cache key untuk availability
-    const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;
     
-    // Get field data (existing code)
-    let field = null;
-    const fieldCacheKey = `field:${lapangan_id}`;
-    
-    try {
-      if (client.isOpen) {
-        const cachedField = await client.get(fieldCacheKey);
-        if (cachedField) {
-          field = JSON.parse(cachedField);
-        }
-      }
-    } catch (redisError) {
-      logger.warn('Redis field cache read error:', redisError);
-    }
-
-    // If not in cache, get from database
-    if (!field) {
-      field = await Field.findById(lapangan_id).lean();
-      if (!field) {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Lapangan tidak ditemukan'
-        });
-      }
-      
-      // Cache field for 10 minutes
-      try {
-        if (client.isOpen) {
-          await client.setEx(fieldCacheKey, 600, JSON.stringify(field));
-        }
-      } catch (redisError) {
-        logger.warn('Redis field cache save error:', redisError);
-      }
-    }
-
-    // ✅ TAMBAHKAN VALIDASI STATUS DI SINI
-    if (field.status !== 'tersedia') {
+    // ✅ KEEP: Input validation (Controller responsibility)
+    if (!lapangan_id || !tanggal_booking || !jam_booking || !durasi) {
       return res.status(400).json({
         status: 'error',
-        message: 'Lapangan sedang tidak tersedia untuk booking',
-        error: {
-          code: 'FIELD_NOT_AVAILABLE',
-          current_status: field.status,
-          field_name: field.nama
-        }
+        message: 'Semua field harus diisi'
       });
     }
 
-    // ✅ TAMBAHAN: Validasi jenis lapangan aktif
-    if (!field.jenis_lapangan) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Jenis lapangan tidak valid'
-      });
-    }
-
-    // Existing validations continue...
-    const bookingHour = parseInt(jam_booking.split(':')[0]);
-    const closeHour = parseInt(field.jam_tutup.split(':')[0]);
-    const openHour = parseInt(field.jam_buka.split(':')[0]);
-
-    if (bookingHour >= closeHour || bookingHour < openHour) {
-      return res.status(400).json({
-        status: 'error',
-        message: `Jam booking harus antara ${field.jam_buka} - ${field.jam_tutup}`
-      });
-    }
-
-    if (bookingHour + durasi > closeHour) {
-      return res.status(400).json({
-        status: 'error',
-        message: `Durasi melebihi jam tutup lapangan (${field.jam_tutup})`
-      });
-    }
-
-    // Check availability
-    const isAvailable = await Booking.checkAvailability(
-      lapangan_id, 
-      tanggal_booking, 
-      jam_booking
-    );
-
-    if (!isAvailable) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Slot waktu tidak tersedia'
-      });
-    }
-
-    // Calculate price
-    const totalHarga = field.harga * durasi;
-
-    const booking = await Booking.create({
-      pelanggan: req.user._id,
-      lapangan: lapangan_id,
-      jenis_lapangan: field.jenis_lapangan,
-      tanggal_booking,
-      jam_booking,
-      durasi,
-      harga: totalHarga
+    // ✅ MOVED TO SERVICE: Business logic
+    const { booking, field } = await BookingService.createBooking({
+      userId: req.user._id,
+      lapanganId: lapangan_id,
+      tanggalBooking: tanggal_booking,
+      jamBooking: jam_booking,
+      durasi
     });
 
-    // Clear availability cache after booking
+    // ✅ KEEP: Cache management (Controller responsibility)
+    const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;
     try {
-      if (client.isOpen) {
+      if (client && client.isOpen) {
         await client.del(availabilityCacheKey);
         await client.del(`bookings:${req.user._id}`);
         logger.info('Availability cache cleared after booking');
@@ -126,6 +41,7 @@ export const createBooking = async (req, res) => {
       logger.warn('Redis cache clear error:', redisError);
     }
 
+    // ✅ KEEP: Response formatting (Controller responsibility)
     logger.info(`Booking created: ${booking._id}`, {
       user: req.user._id,
       action: 'CREATE_BOOKING'
@@ -133,10 +49,16 @@ export const createBooking = async (req, res) => {
 
     res.status(201).json({
       status: 'success',
+      message: 'Booking berhasil dibuat',
       data: { booking }
     });
+
   } catch (error) {
-    logger.error(`Booking creation error: ${error.message}`);
+    // ✅ KEEP: Error handling (Controller responsibility)
+    logger.error(`Booking creation error: ${error.message}`, {
+      user: req.user._id
+    });
+    
     res.status(400).json({
       status: 'error',
       message: error.message
@@ -144,270 +66,25 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// Mendapatkan semua booking (untuk admin/kasir) - FIXED untuk WIB format
-export const getAllBookings = async (req, res) => {
-  try {
-    // HAPUS .lean() agar virtual fields WIB aktif
-    const bookings = await Booking.find()
-      .populate('pelanggan', 'name email')
-      .populate('lapangan', 'jenis_lapangan nama')
-      .populate('kasir', 'name');
-
-    res.status(200).json({
-      status: 'success',
-      results: bookings.length,
-      data: { bookings }
-    });
-  } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-};
-
-// ADD: Enhanced getAllBookings for cashier with filtering
-export const getAllBookingsForCashier = async (req, res) => {
-  try {
-    const { 
-      status, 
-      payment_status,
-      date_from, 
-      date_to,
-      search,
-      field_type 
-    } = req.query;
-
-    // Build filter
-    const filter = {};
-    
-    if (status && status !== 'all') {
-      filter.status_pemesanan = status;
-    }
-    
-    if (payment_status && payment_status !== 'all') {
-      filter.payment_status = payment_status;
-    }
-
-    if (date_from || date_to) {
-      filter.tanggal_booking = {};
-      if (date_from) {
-        filter.tanggal_booking.$gte = new Date(date_from);
-      }
-      if (date_to) {
-        filter.tanggal_booking.$lte = new Date(date_to);
-      }
-    }
-
-    // ✅ FIXED: Handle null lapangan gracefully
-    let pipeline = [
-      {
-        $lookup: {
-          from: 'users',
-          localField: 'pelanggan',
-          foreignField: '_id',
-          as: 'customer'
-        }
-      },
-      { $unwind: '$customer' },
-      {
-        $lookup: {
-          from: 'fields',
-          localField: 'lapangan',
-          foreignField: '_id',
-          as: 'field'
-        }
-      },
-      // ✅ FIX: Use $unwind with preserveNullAndEmptyArrays
-      { 
-        $unwind: { 
-          path: '$field', 
-          preserveNullAndEmptyArrays: true  // ✅ Keep documents even if no field
-        }
-      },
-      {
-        $lookup: {
-          from: 'payments',
-          localField: '_id',
-          foreignField: 'booking',
-          as: 'payment'
-        }
-      }
-    ];
-
-    // Add search filter
-    if (search) {
-      pipeline.push({
-        $match: {
-          $or: [
-            { 'customer.name': { $regex: search, $options: 'i' } },
-            { 'customer.email': { $regex: search, $options: 'i' } },
-            { 'field.nama': { $regex: search, $options: 'i' } },
-            { 'field.jenis_lapangan': { $regex: search, $options: 'i' } },
-            { 'jenis_lapangan': { $regex: search, $options: 'i' } }  // ✅ Search in booking field too
-          ]
-        }
-      });
-    }
-
-    // Add field type filter
-    if (field_type && field_type !== 'all') {
-      pipeline.push({
-        $match: {
-          $or: [
-            { 'field.jenis_lapangan': field_type },
-            { 'jenis_lapangan': field_type }  // ✅ Check both field and booking type
-          ]
-        }
-      });
-    }
-
-    // Add main filters
-    if (Object.keys(filter).length > 0) {
-      pipeline.push({ $match: filter });
-    }
-
-    // Add sorting (newest first)
-    pipeline.push({ $sort: { createdAt: -1 } });
-
-    // Execute aggregation
-    const bookings = await Booking.aggregate(pipeline);
-
-    // ✅ FIXED: Format response handling null fields
-    const formattedBookings = bookings.map(booking => {
-      const latestPayment = booking.payment.length > 0 
-        ? booking.payment.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
-        : null;
-
-      return {
-        id: booking._id,
-        customer: {
-          name: booking.customer.name,
-          email: booking.customer.email,
-          phone: booking.customer.phone || 'Tidak tersedia'
-        },
-        field: {
-          // ✅ Handle null lapangan
-          name: booking.field?.nama || 'Lapangan tidak diketahui',
-          type: booking.field?.jenis_lapangan || booking.jenis_lapangan || 'Jenis tidak diketahui',
-          price: booking.field?.harga || 0
-        },
-        booking_details: {
-          date: moment(booking.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY'),
-          time: booking.jam_booking,
-          duration: booking.durasi,
-          total_price: booking.harga
-        },
-        status: {
-          booking: booking.status_pemesanan,
-          payment: booking.payment_status
-        },
-        payment_info: latestPayment ? {
-          id: latestPayment._id,
-          type: latestPayment.payment_type,
-          amount: latestPayment.amount,
-          status: latestPayment.status,
-          submitted_at: moment(latestPayment.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'),
-          has_proof: !!latestPayment.payment_proof
-        } : null,
-        timestamps: {
-          created: moment(booking.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'),
-          updated: moment(booking.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
-        }
-      };
-    });
-
-    // Calculate summary stats
-    const summary = {
-      total_bookings: formattedBookings.length,
-      pending_bookings: formattedBookings.filter(b => b.status.booking === 'pending').length,
-      confirmed_bookings: formattedBookings.filter(b => b.status.booking === 'confirmed').length,
-      cancelled_bookings: formattedBookings.filter(b => b.status.booking === 'cancelled').length,
-      pending_payments: formattedBookings.filter(b => b.status.payment === 'pending_payment').length,
-      approved_payments: formattedBookings.filter(b => b.status.payment === 'dp_confirmed' || b.status.payment === 'fully_paid').length
-    };
-
-    // Log kasir activity
-    logger.info(`Kasir ${req.user.email} viewed all bookings`, {
-      role: req.user.role,
-      filters: filter,
-      search_term: search || 'none',
-      total_results: formattedBookings.length,
-      action: 'VIEW_ALL_BOOKINGS'
-    });
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Data booking berhasil diambil',
-      data: {
-        bookings: formattedBookings,
-        filters_applied: {
-          status: status || 'all',
-          payment_status: payment_status || 'all',
-          field_type: field_type || 'all',
-          date_range: date_from && date_to ? `${date_from} to ${date_to}` : 'all',
-          search: search || 'none'
-        },
-        summary
-      }
-    });
-
-  } catch (error) {
-    logger.error(`Error getting all bookings for kasir: ${error.message}`, {
-      userId: req.user._id,
-      role: req.user.role,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Gagal mengambil data booking'
-    });
-  }
-};
-
-// ✅ ADD: Export checkAvailability function
 export const checkAvailability = async (req, res) => {
   try {
     const { lapangan, tanggal, jam } = req.query;
-
+    
+    // ✅ KEEP: Input validation
     if (!lapangan || !tanggal || !jam) {
       return res.status(400).json({
         status: 'error',
-        message: 'Parameter lapangan, tanggal, dan jam harus diisi',
-        required_params: ['lapangan', 'tanggal', 'jam']
+        message: 'Parameter lapangan, tanggal, dan jam harus diisi'
       });
     }
 
-    // Validate field exists
-    const field = await Field.findById(lapangan);
-    if (!field) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Lapangan tidak ditemukan'
-      });
-    }
+    // ✅ MOVED TO SERVICE: Field validation
+    const field = await BookingService.validateFieldForBooking(lapangan);
+    
+    // ✅ MOVED TO SERVICE: Availability check
+    const isAvailable = await BookingService.checkSlotAvailability(lapangan, tanggal, jam);
 
-    // Check if field is available
-    if (field.status !== 'tersedia') {
-      return res.status(400).json({
-        status: 'error',
-        message: `Lapangan sedang ${field.status}`,
-        is_available: false,
-        field_status: field.status
-      });
-    }
-
-    // Check time slot availability
-    const existingBooking = await Booking.findOne({
-      lapangan: lapangan,
-      tanggal_booking: tanggal,
-      jam_booking: jam,
-      status_pemesanan: { $in: ['pending', 'confirmed'] }
-    });
-
-    const isAvailable = !existingBooking;
-
+    // ✅ KEEP: Response formatting
     res.status(200).json({
       status: 'success',
       message: isAvailable ? 'Slot tersedia' : 'Slot sudah dibooking',
@@ -423,115 +100,155 @@ export const checkAvailability = async (req, res) => {
         slot: {
           date: tanggal,
           time: jam,
-          booked_by: existingBooking ? 'User lain' : null
         }
       }
     });
 
   } catch (error) {
-    logger.error(`Check availability error: ${error.message}`);
-    res.status(500).json({
+    res.status(400).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat mengecek ketersediaan'
+      message: error.message
     });
   }
 };
 
-// ✅ RENAME: getAvailableSlots menjadi getAvailability untuk konsistensi
-export const getAvailability = async (req, res) => {
+// ✅ SINGLE updateBooking function (KEEP THIS ONE ONLY)
+export const updateBooking = async (req, res) => {
   try {
-    const { fieldId, date } = req.query;
-    const cacheKey = `availability:${fieldId}:${date}`;
-    
-    // Check cache first
-    let cachedAvailability = null;
-    try {
-      if (client && client.isOpen) {
-        cachedAvailability = await client.get(cacheKey);
-      }
-    } catch (redisError) {
-      logger.warn('Redis availability cache read error:', redisError);
-    }
+    const { id } = req.params;
+    const { tanggal_booking, jam_booking, durasi, catatan } = req.body;
+    const userId = req.user._id;
 
-    if (cachedAvailability) {
-      logger.info('Serving availability from cache');
-      return res.json({
-        status: 'success',
-        data: JSON.parse(cachedAvailability)
-      });
-    }
+    // ✅ MOVED TO SERVICE: Booking validation
+    const booking = await BookingService.validateBookingUpdate(id, userId, req.body);
     
-    // Validate field exists
-    const field = await Field.findById(fieldId).lean();
-    if (!field) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Lapangan tidak ditemukan'
-      });
-    }
-
-    // Check field availability
-    if (field.status !== 'tersedia') {
-      return res.status(400).json({
-        status: 'error',
-        message: `Lapangan sedang ${field.status} dan tidak tersedia untuk booking`,
-        data: {
-          fieldName: field.nama,
-          fieldType: field.jenis_lapangan,
-          status: field.status,
-          date: date,
-          slots: []
-        }
-      });
-    }
-
-    // Get all booked slots for the date
-    const bookedSlots = await Booking.find({
-      lapangan: fieldId,
-      tanggal_booking: date,
-      status_pemesanan: { $in: ['pending', 'confirmed'] }
-    }).select('jam_booking');
-    
-    // Generate all possible time slots
-    const allSlots = generateTimeSlots();
-    
-    // Mark slots as available or booked
-    const availabilityMap = allSlots.map(slot => {
-      const isBooked = bookedSlots.some(booking => 
-        booking.jam_booking === slot.time
+    // ✅ MOVED TO SERVICE: Conflict check if time is being changed
+    if (tanggal_booking && jam_booking) {
+      const field = booking.lapangan;
+      
+      BookingService.validateOperatingHours(field, jam_booking, durasi || booking.durasi);
+      
+      const isAvailable = await BookingService.checkSlotAvailability(
+        field._id, 
+        tanggal_booking, 
+        jam_booking, 
+        id
       );
+      
+      if (!isAvailable) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Slot waktu sudah dibooking oleh user lain'
+        });
+      }
+    }
 
-      return {
-        time: slot.time,
-        isAvailable: !isBooked,
-        price: field.harga
-      };
-    });
+    // ✅ KEEP: Update operation
+    if (tanggal_booking) booking.tanggal_booking = tanggal_booking;
+    if (jam_booking) booking.jam_booking = jam_booking;
+    if (durasi) {
+      booking.durasi = durasi;
+      booking.harga = BookingService.calculateBookingPrice(booking.lapangan, durasi);
+    }
+    if (catatan !== undefined) booking.catatan = catatan;
 
-    const responseData = {
-      fieldName: field.nama,
-      fieldType: field.jenis_lapangan,
-      date: date,
-      slots: availabilityMap
-    };
+    await booking.save();
 
-    // Cache for 2 minutes
+    // ✅ KEEP: Cache management
     try {
       if (client && client.isOpen) {
-        await client.setEx(cacheKey, 120, JSON.stringify(responseData));
-        logger.info('Availability cached successfully');
+        await client.del(`bookings:${userId}`);
+        await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
       }
     } catch (redisError) {
-      logger.warn('Redis availability cache save error:', redisError);
+      logger.warn('Redis cache clear error:', redisError);
     }
+
+    // ✅ KEEP: Response
+    logger.info(`Booking updated: ${booking._id}`, {
+      user: userId,
+      changes: { tanggal_booking, jam_booking, durasi, catatan }
+    });
 
     res.status(200).json({
       status: 'success',
-      data: responseData
+      message: 'Booking berhasil diperbarui',
+      data: { booking }
     });
 
   } catch (error) {
-    logger.error(`Error getting availability: ${error.message}`);
+    logger.error(`Update booking error: ${error.message}`);
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+};
+
+// ✅ SINGLE deleteBooking function (KEEP THIS ONE ONLY)
+export const deleteBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // ✅ KEEP: Find and ownership check
+    const booking = await Booking.findOne({
+      _id: id,
+      pelanggan: userId
+    }).populate('lapangan');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // ✅ MOVED TO SERVICE: Cancellation validation
+    await BookingService.validateBookingCancellation(booking);
+
+    // ✅ KEEP: Payment check and cancellation logic
+    let hasPayments = false;
+    try {
+      const { default: Payment } = await import('../models/Payment.js');
+      const payments = await Payment.find({ booking: id });
+      hasPayments = payments.length > 0;
+    } catch (importError) {
+      logger.warn('Payment model import error:', importError.message);
+    }
+
+    if (hasPayments && booking.status_pemesanan !== 'pending') {
+      booking.status_pemesanan = 'cancelled';
+      booking.cancelled_at = new Date();
+      booking.cancellation_reason = 'Dibatalkan oleh customer';
+      await booking.save();
+    } else {
+      await Booking.findByIdAndDelete(id);
+    }
+
+    // ✅ KEEP: Cache management and response
+    try {
+      if (client && client.isOpen) {
+        await client.del(`bookings:${userId}`);
+        await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    logger.info(`Booking ${hasPayments ? 'cancelled' : 'deleted'}: ${booking._id}`, {
+      user: userId,
+      reason: 'Customer cancellation'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Booking berhasil ${hasPayments ? 'dibatalkan' : 'dihapus'}`,
+      data: { booking }
+    });
+
+  } catch (error) {
+    logger.error(`Delete booking error: ${error.message}`);
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -843,298 +560,277 @@ export const getBookingStatusSummary = async (req, res) => {
   }
 };
 
-// ============= UPDATE BOOKING =============
-export const updateBooking = async (req, res) => {
+// ============= KASIR FUNCTIONS =============
+export const getAllBookingsForCashier = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { tanggal_booking, jam_booking, durasi, catatan } = req.body;
-    const userId = req.user._id;
+    const { 
+      status, 
+      payment_status,
+      date_from, 
+      date_to,
+      search,
+      field_type 
+    } = req.query;
 
-    // Find booking and check ownership
-    const booking = await Booking.findOne({
-      _id: id,
-      pelanggan: userId
-    }).populate('lapangan');
-
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
-      });
-    }
-
-    // Only allow updates if booking is still pending
-    if (booking.status_pemesanan !== 'pending') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Booking yang sudah dikonfirmasi tidak dapat diubah'
-      });
-    }
-
-    // Validate new booking time if provided
-    if (tanggal_booking && jam_booking) {
-      const field = booking.lapangan;
-      
-      // Check if new time slot is available
-      const conflictBooking = await Booking.findOne({
-        lapangan: field._id,
-        tanggal_booking: tanggal_booking,
-        jam_booking: jam_booking,
-        _id: { $ne: id },
-        status_pemesanan: { $in: ['pending', 'confirmed'] }
-      });
-
-      if (conflictBooking) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Slot waktu sudah dibooking oleh user lain'
-        });
-      }
-
-      // Validate operational hours
-      const bookingHour = parseInt(jam_booking.split(':')[0]);
-      const closeHour = parseInt(field.jam_tutup.split(':')[0]);
-      const openHour = parseInt(field.jam_buka.split(':')[0]);
-
-      if (bookingHour >= closeHour || bookingHour < openHour) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Jam booking harus antara ${field.jam_buka} - ${field.jam_tutup}`
-        });
-      }
-
-      // Check duration doesn't exceed closing time
-      const newDuration = durasi || booking.durasi;
-      if (bookingHour + newDuration > closeHour) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Durasi melebihi jam tutup lapangan (${field.jam_tutup})`
-        });
-      }
-    }
-
-    // Update booking
-    if (tanggal_booking) booking.tanggal_booking = tanggal_booking;
-    if (jam_booking) booking.jam_booking = jam_booking;
-    if (durasi) {
-      booking.durasi = durasi;
-      booking.harga = booking.lapangan.harga * durasi; // Recalculate price
-    }
-    if (catatan !== undefined) booking.catatan = catatan;
-
-    await booking.save();
-
-    // Clear cache
-    try {
-      if (client && client.isOpen) {
-        await client.del(`bookings:${userId}`);
-        await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
-    }
-
-    logger.info(`Booking updated: ${booking._id}`, {
-      user: userId,
-      changes: { tanggal_booking, jam_booking, durasi, catatan }
-    });
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Booking berhasil diperbarui',
-      data: { booking }
-    });
-
-  } catch (error) {
-    logger.error(`Update booking error: ${error.message}`);
-    res.status(500).json({
-      status: 'error',
-      message: 'Terjadi kesalahan saat memperbarui booking'
-    });
-  }
-};
-
-// ============= DELETE BOOKING =============
-export const deleteBooking = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-
-    // Find booking and check ownership
-    const booking = await Booking.findOne({
-      _id: id,
-      pelanggan: userId
-    }).populate('lapangan');
-
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
-      });
-    }
-
-    // Check if booking can be cancelled
-    if (booking.status_pemesanan === 'confirmed') {
-      // Check if booking is at least 24 hours in future
-      const bookingDateTime = new Date(`${booking.tanggal_booking}T${booking.jam_booking}`);
-      const now = new Date();
-      const hoursDiff = (bookingDateTime - now) / (1000 * 60 * 60);
-
-      if (hoursDiff < 24) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Booking terkonfirmasi hanya bisa dibatalkan minimal 24 jam sebelum jadwal'
-        });
-      }
-    }
-
-    // Check if there are payments associated
-    let hasPayments = false;
-    try {
-      const { default: Payment } = await import('../models/Payment.js');
-      const payments = await Payment.find({ booking: id });
-      hasPayments = payments.length > 0;
-    } catch (importError) {
-      logger.warn('Payment model import error:', importError.message);
-    }
-
-    if (hasPayments && booking.status_pemesanan !== 'pending') {
-      // Don't delete, just mark as cancelled
-      booking.status_pemesanan = 'cancelled';
-      booking.cancelled_at = new Date();
-      booking.cancellation_reason = 'Dibatalkan oleh customer';
-      await booking.save();
-
-      // Clear cache
-      try {
-        if (client && client.isOpen) {
-          await client.del(`bookings:${userId}`);
-          await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
-        }
-      } catch (redisError) {
-        logger.warn('Redis cache clear error:', redisError);
-      }
-
-      logger.info(`Booking cancelled: ${booking._id}`, {
-        user: userId,
-        reason: 'Customer cancellation'
-      });
-
-      return res.status(200).json({
-        status: 'success',
-        message: 'Booking berhasil dibatalkan',
-        data: { booking }
-      });
-    }
-
-    // Safe to delete (no payments or still pending)
-    await Booking.findByIdAndDelete(id);
-
-    // Clear cache
-    try {
-      if (client && client.isOpen) {
-        await client.del(`bookings:${userId}`);
-        await client.del(`availability:${booking.lapangan._id}:${booking.tanggal_booking}`);
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
-    }
-
-    logger.info(`Booking deleted: ${id}`, {
-      user: userId,
-      field: booking.lapangan.nama,
-      date: booking.tanggal_booking,
-      time: booking.jam_booking
-    });
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Booking berhasil dihapus'
-    });
-
-  } catch (error) {
-    logger.error(`Delete booking error: ${error.message}`);
-    res.status(500).json({
-      status: 'error',
-      message: 'Terjadi kesalahan saat menghapus booking'
-    });
-  }
-};
-
-// ============= GET BOOKING BY ID (for individual access) =============
-export const getBookingById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-    const userRole = req.user.role;
-
-    // Build query based on role
-    let query = { _id: id };
+    // Build filter
+    const filter = {};
     
-    // Customers can only see their own bookings
-    if (userRole === 'customer') {
-      query.pelanggan = userId;
+    if (status && status !== 'all') {
+      filter.status_pemesanan = status;
     }
-    // Admin and cashier can see all bookings (no additional filter)
+    
+    if (payment_status && payment_status !== 'all') {
+      filter.payment_status = payment_status;
+    }
 
-    const booking = await Booking.findOne(query)
-      .populate('pelanggan', 'name email')
-      .populate('lapangan', 'nama jenis_lapangan harga')
-      .populate('kasir', 'name');
+    if (date_from || date_to) {
+      filter.tanggal_booking = {};
+      if (date_from) {
+        filter.tanggal_booking.$gte = new Date(date_from);
+      }
+      if (date_to) {
+        filter.tanggal_booking.$lte = new Date(date_to);
+      }
+    }
 
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
+    // Build aggregation pipeline
+    let pipeline = [
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'pelanggan',
+          foreignField: '_id',
+          as: 'customer'
+        }
+      },
+      { $unwind: '$customer' },
+      {
+        $lookup: {
+          from: 'fields',
+          localField: 'lapangan',
+          foreignField: '_id',
+          as: 'field'
+        }
+      },
+      { 
+        $unwind: { 
+          path: '$field', 
+          preserveNullAndEmptyArrays: true 
+        }
+      },
+      {
+        $lookup: {
+          from: 'payments',
+          localField: '_id',
+          foreignField: 'booking',
+          as: 'payment'
+        }
+      }
+    ];
+
+    // Add search filter
+    if (search) {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'customer.name': { $regex: search, $options: 'i' } },
+            { 'customer.email': { $regex: search, $options: 'i' } },
+            { 'field.nama': { $regex: search, $options: 'i' } },
+            { 'field.jenis_lapangan': { $regex: search, $options: 'i' } },
+            { 'jenis_lapangan': { $regex: search, $options: 'i' } }
+          ]
+        }
       });
     }
 
-    // Get payment information if exists
-    let payments = [];
-    try {
-      const { default: Payment } = await import('../models/Payment.js');
-      payments = await Payment.find({ booking: id }).sort({ createdAt: -1 });
-    } catch (importError) {
-      logger.warn('Payment model import error:', importError.message);
+    // Add field type filter
+    if (field_type && field_type !== 'all') {
+      pipeline.push({
+        $match: {
+          $or: [
+            { 'field.jenis_lapangan': field_type },
+            { 'jenis_lapangan': field_type }
+          ]
+        }
+      });
     }
+
+    // Add main filters
+    if (Object.keys(filter).length > 0) {
+      pipeline.push({ $match: filter });
+    }
+
+    // Add sorting
+    pipeline.push({ $sort: { createdAt: -1 } });
+
+    // Execute aggregation
+    const bookings = await Booking.aggregate(pipeline);
+
+    // Format response
+    const formattedBookings = bookings.map(booking => {
+      const latestPayment = booking.payment.length > 0 
+        ? booking.payment.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
+        : null;
+
+      return {
+        id: booking._id,
+        customer: {
+          name: booking.customer.name,
+          email: booking.customer.email,
+          phone: booking.customer.phone || 'Tidak tersedia'
+        },
+        field: {
+          name: booking.field?.nama || 'Lapangan tidak diketahui',
+          type: booking.field?.jenis_lapangan || booking.jenis_lapangan || 'Jenis tidak diketahui',
+          price: booking.field?.harga || 0
+        },
+        booking_details: {
+          date: moment(booking.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY'),
+          time: booking.jam_booking,
+          duration: booking.durasi,
+          total_price: booking.harga
+        },
+        status: {
+          booking: booking.status_pemesanan,
+          payment: booking.payment_status
+        },
+        payment_info: latestPayment ? {
+          id: latestPayment._id,
+          type: latestPayment.payment_type,
+          amount: latestPayment.amount,
+          status: latestPayment.status,
+          submitted_at: moment(latestPayment.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'),
+          has_proof: !!latestPayment.payment_proof
+        } : null,
+        timestamps: {
+          created: moment(booking.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'),
+          updated: moment(booking.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
+        }
+      };
+    });
+
+    // Calculate summary stats
+    const summary = {
+      total_bookings: formattedBookings.length,
+      pending_bookings: formattedBookings.filter(b => b.status.booking === 'pending').length,
+      confirmed_bookings: formattedBookings.filter(b => b.status.booking === 'confirmed').length,
+      cancelled_bookings: formattedBookings.filter(b => b.status.booking === 'cancelled').length,
+      pending_payments: formattedBookings.filter(b => b.status.payment === 'pending_payment').length,
+      approved_payments: formattedBookings.filter(b => b.status.payment === 'dp_confirmed' || b.status.payment === 'fully_paid').length
+    };
+
+    // Log kasir activity
+    logger.info(`Kasir ${req.user.email} viewed all bookings`, {
+      role: req.user.role,
+      filters: filter,
+      search_term: search || 'none',
+      total_results: formattedBookings.length,
+      action: 'VIEW_ALL_BOOKINGS'
+    });
 
     res.status(200).json({
       status: 'success',
-      data: { 
-        booking,
-        payments: payments.map(payment => ({
-          id: payment._id,
-          type: payment.payment_type,
-          amount: payment.amount,
-          status: payment.status,
-          submittedAt: payment.createdAtWIB,
-          verifiedAt: payment.verified_at ? 
-            moment(payment.verified_at).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss') : null
-        }))
+      message: 'Data booking berhasil diambil',
+      data: {
+        bookings: formattedBookings,
+        filters_applied: {
+          status: status || 'all',
+          payment_status: payment_status || 'all',
+          field_type: field_type || 'all',
+          date_range: date_from && date_to ? `${date_from} to ${date_to}` : 'all',
+          search: search || 'none'
+        },
+        summary
       }
     });
 
   } catch (error) {
-    logger.error(`Get booking by ID error: ${error.message}`);
+    logger.error(`Error getting all bookings for kasir: ${error.message}`, {
+      userId: req.user._id,
+      role: req.user.role,
+      stack: error.stack
+    });
+    
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat mengambil data booking'
+      message: 'Gagal mengambil data booking'
     });
   }
 };
 
-// Helper function to generate time slots
-const generateTimeSlots = () => {
-  const slots = [];
-  const startHour = 7;  // 07:00
-  const endHour = 23;   // 23:00
-  
-  for (let hour = startHour; hour <= endHour; hour++) {
-    slots.push({
-      time: `${hour.toString().padStart(2, '0')}:00`,
-      displayTime: `${hour}:00`
+// ============= ADMIN FUNCTIONS =============
+export const getAllBookings = async (req, res) => {
+  try {
+    const { status, payment_status, date_from, date_to, search, field_type } = req.query;
+
+    // Build filter
+    const filter = {};
+    
+    if (status && status !== 'all') {
+      filter.status_pemesanan = status;
+    }
+    
+    if (payment_status && payment_status !== 'all') {
+      filter.payment_status = payment_status;
+    }
+
+    if (date_from || date_to) {
+      filter.tanggal_booking = {};
+      if (date_from) {
+        filter.tanggal_booking.$gte = new Date(date_from);
+      }
+      if (date_to) {
+        filter.tanggal_booking.$lte = new Date(date_to);
+      }
+    }
+
+    let query = Booking.find(filter)
+      .populate('pelanggan', 'name email phone')
+      .populate('lapangan', 'nama jenis_lapangan harga')
+      .populate('kasir', 'name')
+      .sort({ createdAt: -1 });
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query = query.where({
+        $or: [
+          { 'pelanggan.name': searchRegex },
+          { 'pelanggan.email': searchRegex },
+          { 'lapangan.nama': searchRegex }
+        ]
+      });
+    }
+
+    if (field_type && field_type !== 'all') {
+      query = query.where('lapangan.jenis_lapangan', field_type);
+    }
+
+    const bookings = await query.exec();
+
+    logger.info(`Admin ${req.user.email} viewed all bookings`, {
+      role: req.user.role,
+      filters: filter,
+      search_term: search || 'none',
+      total_results: bookings.length,
+      action: 'ADMIN_VIEW_ALL_BOOKINGS'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      results: bookings.length,
+      data: { bookings }
+    });
+
+  } catch (error) {
+    logger.error(`Admin get all bookings error: ${error.message}`, {
+      userId: req.user._id,
+      role: req.user.role,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil data booking'
     });
   }
-  
-  return slots;
 };

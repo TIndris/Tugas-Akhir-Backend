@@ -226,4 +226,76 @@ export class FieldService {
       logger.warn('Field cache clear error:', error.message);
     }
   }
+
+  // ✅ MOVE: Field creation validation from controller
+  static async validateFieldCreation(fieldData) {
+    const { nama, jenis_lapangan, jam_buka, jam_tutup, harga } = fieldData;
+    
+    // Required fields validation
+    if (!nama || !jenis_lapangan || !jam_buka || !jam_tutup || !harga) {
+      throw new Error('Semua field harus diisi');
+    }
+    
+    // Check if field name already exists
+    const existingField = await Field.findOne({ nama: nama.trim() });
+    if (existingField) {
+      throw new Error('Nama lapangan sudah digunakan');
+    }
+    
+    // Validate field type
+    if (!this.FIELD_TYPES.includes(jenis_lapangan.trim())) {
+      throw new Error('Jenis lapangan tidak valid');
+    }
+    
+    // Validate operating hours
+    if (!this.validateOperatingHours(jam_buka.trim(), jam_tutup.trim())) {
+      throw new Error('Jam operasional tidak valid');
+    }
+    
+    // Validate price
+    const hargaNum = parseInt(harga);
+    if (isNaN(hargaNum) || hargaNum <= 0) {
+      throw new Error('Harga harus berupa angka positif');
+    }
+    
+    return {
+      nama: nama.trim(),
+      jenis_lapangan: jenis_lapangan.trim(),
+      jam_buka: jam_buka.trim(),
+      jam_tutup: jam_tutup.trim(),
+      harga: hargaNum
+    };
+  }
+  
+  // ✅ MOVE: Field update validation from controller
+  static async validateFieldUpdate(fieldId, updateData) {
+    const currentField = await Field.findById(fieldId);
+    if (!currentField) {
+      throw new Error('Lapangan tidak ditemukan');
+    }
+
+    // Check for duplicate name if nama is being updated
+    if (updateData.nama && updateData.nama !== currentField.nama) {
+      const existingField = await Field.findOne({ 
+        nama: updateData.nama, 
+        _id: { $ne: fieldId } 
+      });
+      
+      if (existingField) {
+        throw new Error('Nama lapangan sudah digunakan');
+      }
+    }
+
+    // Validate operating hours if being updated
+    if (updateData.jam_buka || updateData.jam_tutup) {
+      const jamBuka = updateData.jam_buka || currentField.jam_buka;
+      const jamTutup = updateData.jam_tutup || currentField.jam_tutup;
+      
+      if (!this.validateOperatingHours(jamBuka, jamTutup)) {
+        throw new Error('Jam operasional tidak valid');
+      }
+    }
+
+    return currentField;
+  }
 }

@@ -1,6 +1,6 @@
 import User from '../models/User.js';
 import logger from '../config/logger.js';
-import { validateEmail, validatePhoneNumber, validateName } from '../validators/userValidators.js';
+import { ProfileService } from '../services/profileService.js';
 
 // ============= GET USER PROFILE =============
 export const getProfile = async (req, res) => {
@@ -62,46 +62,29 @@ export const updateProfile = async (req, res) => {
       action: 'UPDATE_PROFILE_ATTEMPT'
     });
 
-    // Validate input data
-    const errors = [];
-
-    // Validate name (required)
-    if (!name || !name.trim()) {
-      errors.push({ field: 'name', message: 'Nama harus diisi' });
-    } else if (!validateName(name.trim())) {
-      errors.push({ field: 'name', message: 'Nama harus terdiri dari 2-50 karakter huruf' });
-    }
-
-    // Validate email (required)
-    if (!email || !email.trim()) {
-      errors.push({ field: 'email', message: 'Email harus diisi' });
-    } else if (!validateEmail(email.trim())) {
-      errors.push({ field: 'email', message: 'Format email tidak valid' });
-    }
-
-    // Validate phone (optional)
-    if (phone && phone.trim() && !validatePhoneNumber(phone.trim())) {
-      errors.push({ field: 'phone', message: 'Format nomor telepon tidak valid (08xxxxxxxxx)' });
-    }
-
-    // Return validation errors
-    if (errors.length > 0) {
+    // ✅ MOVED TO SERVICE: Validation logic
+    const validationErrors = ProfileService.validateProfileUpdate({ name, email, phone });
+    if (validationErrors.length > 0) {
       return res.status(400).json({
         status: 'error',
         message: 'Data tidak valid',
-        errors: errors
+        errors: validationErrors
       });
     }
 
-    // Check if email already exists (if email is being changed)
+    // ✅ KEEP: Get current user (Controller responsibility)
     const currentUser = await User.findById(userId);
-    if (email.trim().toLowerCase() !== currentUser.email.toLowerCase()) {
-      const existingUser = await User.findOne({ 
-        email: email.trim().toLowerCase(),
-        _id: { $ne: userId }
+    if (!currentUser) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User tidak ditemukan'
       });
-      
-      if (existingUser) {
+    }
+
+    // ✅ MOVED TO SERVICE: Email uniqueness check
+    if (email.trim().toLowerCase() !== currentUser.email.toLowerCase()) {
+      const isEmailUnique = await ProfileService.checkEmailUniqueness(email, userId);
+      if (!isEmailUnique) {
         return res.status(400).json({
           status: 'error',
           message: 'Email sudah digunakan oleh user lain',
@@ -110,33 +93,12 @@ export const updateProfile = async (req, res) => {
       }
     }
 
-    // Prepare update data
-    const updateData = {
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone && phone.trim() ? phone.trim() : null
-    };
+    // ✅ MOVED TO SERVICE: Update operation
+    const updatedUser = await ProfileService.updateUserProfile(userId, { name, email, phone });
 
-    // Update user profile
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      updateData,
-      { 
-        new: true, 
-        runValidators: true,
-        select: '-password'
-      }
-    );
-
-    if (!updatedUser) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User tidak ditemukan'
-      });
-    }
-
+    // ✅ KEEP: Logging and response (Controller responsibility)
     logger.info(`Profile updated successfully: ${userId}`, {
-      updatedFields: Object.keys(updateData),
+      updatedFields: ['name', 'email', phone ? 'phone' : null].filter(Boolean),
       action: 'UPDATE_PROFILE_SUCCESS'
     });
 
@@ -165,13 +127,13 @@ export const updateProfile = async (req, res) => {
       stack: error.stack
     });
 
-    // Handle validation errors
+    // ✅ KEEP: Error handling
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,
         message: err.message
       }));
-
+      
       return res.status(400).json({
         status: 'error',
         message: 'Data tidak valid',
@@ -179,7 +141,6 @@ export const updateProfile = async (req, res) => {
       });
     }
 
-    // Handle duplicate key errors
     if (error.code === 11000) {
       const field = Object.keys(error.keyValue)[0];
       return res.status(400).json({
