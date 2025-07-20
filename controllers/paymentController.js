@@ -8,11 +8,27 @@ import moment from 'moment-timezone';
 export const createPayment = async (req, res) => {
   try {
     console.log('=== PAYMENT CREATE DEBUG ===');
-    console.log('Request body:', req.body);
-    console.log('Request file:', req.file);
+    console.log('Content-Type:', req.headers['content-type']);
+    console.log('Content-Length:', req.headers['content-length']);
+    console.log('Request body keys:', req.body ? Object.keys(req.body) : 'No body');
+    console.log('Request file:', req.file ? {
+      filename: req.file.filename,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    } : 'No file');
     console.log('User:', req.user?._id);
 
-    // ✅ FIXED: Destructure all fields from form-data
+    // ✅ Validate request structure first
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Request body kosong. Pastikan menggunakan form-data dengan field yang benar.',
+        error_code: 'EMPTY_REQUEST_BODY',
+        required_fields: ['booking_id', 'payment_type', 'sender_name', 'transfer_amount', 'transfer_date']
+      });
+    }
+
+    // ✅ Extract fields with better error handling
     const { 
       booking_id, 
       payment_type, 
@@ -21,6 +37,14 @@ export const createPayment = async (req, res) => {
       transfer_date,
       transfer_reference 
     } = req.body;
+
+    console.log('Extracted fields:', {
+      booking_id: booking_id || 'missing',
+      payment_type: payment_type || 'missing', 
+      sender_name: sender_name || 'missing',
+      transfer_amount: transfer_amount || 'missing',
+      transfer_date: transfer_date || 'missing'
+    });
 
     // ✅ Enhanced validation with detailed error messages
     const validateTransferDate = (dateString) => {
@@ -296,24 +320,20 @@ export const createPayment = async (req, res) => {
   } catch (error) {
     logger.error('Create payment error:', error);
     
-    // ✅ Enhanced error response
     res.status(500).json({
       status: 'error',
       message: 'Internal server error',
-      error: {
-        type: error.name || 'UnknownError',
+      error_code: 'PAYMENT_CREATE_ERROR',
+      error_details: process.env.NODE_ENV === 'development' ? {
         message: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
-      debug_info: process.env.NODE_ENV === 'development' ? {
-        body: req.body,
-        file: req.file ? {
-          filename: req.file.filename,
-          path: req.file.path,
-          size: req.file.size
-        } : null,
-        user_id: req.user?._id
-      } : undefined
+        stack: error.stack,
+        request_info: {
+          contentType: req.headers['content-type'],
+          contentLength: req.headers['content-length'],
+          bodyKeys: req.body ? Object.keys(req.body) : 'No body',
+          hasFile: !!req.file
+        }
+      } : 'Contact support'
     });
   }
 };

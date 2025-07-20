@@ -69,8 +69,16 @@ app.use(cors({
 app.options('*', cors());
 
 // ✅ UPDATED Body parser - Support JSON, URL-encoded, and Form Data
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ 
+  limit: '50mb',
+  strict: false 
+}));
+
+app.use(express.urlencoded({ 
+  extended: true, 
+  limit: '50mb',
+  parameterLimit: 50000
+}));
 
 // ✅ ADD Form Data Support with Multer
 const upload = multer({
@@ -96,24 +104,81 @@ const upload = multer({
   }
 });
 
-// ✅ ADD Form data middleware (auto-detect content type)
+// ✅ ADD: Payment debugging middleware (TAMBAHKAN SETELAH BODY PARSER)
+app.use((req, res, next) => {
+  if (req.path.includes('/payments') && req.method === 'POST') {
+    console.log('🔍 Payment request debug:', {
+      method: req.method,
+      path: req.path,
+      contentType: req.headers['content-type'],
+      contentLength: req.headers['content-length'],
+      userAgent: req.headers['user-agent'],
+      hasBody: !!req.body,
+      bodyKeys: req.body ? Object.keys(req.body) : [],
+      files: req.files ? req.files.length : 0,
+      timestamp: new Date().toISOString()
+    });
+  }
+  next();
+});
+
+// ✅ ADD: Enhanced error handling (TAMBAHKAN SEBELUM MULTER MIDDLEWARE)
+app.use((error, req, res, next) => {
+  // Handle specific multer errors
+  if (error instanceof multer.MulterError) {
+    logger.error('Multer error:', error);
+    return res.status(400).json({
+      status: 'error',
+      message: `Upload error: ${error.message}`,
+      error_code: error.code
+    });
+  }
+  
+  // Handle JSON syntax errors
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    logger.error('Bad JSON syntax:', error);
+    return res.status(400).json({
+      status: 'error',
+      message: 'Invalid JSON format',
+      error_code: 'BAD_JSON'
+    });
+  }
+  
+  next(error);
+});
+
+// ✅ ENHANCED FORM DATA MIDDLEWARE (REPLACE EXISTING)
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'];
   
-  // Check if request has multipart/form-data
   if (contentType && contentType.includes('multipart/form-data')) {
     upload.any()(req, res, (err) => {
       if (err) {
+        logger.error('Form data parsing error:', err);
+        
+        // Handle specific errors
+        if (err.message.includes('Unexpected end of form')) {
+          return res.status(400).json({
+            status: 'error',
+            message: 'Data form tidak lengkap atau corrupt. Pastikan semua field terisi.',
+            error_code: 'INCOMPLETE_FORM_DATA',
+            suggestions: [
+              'Periksa koneksi internet',
+              'Pastikan file tidak rusak',
+              'Coba upload ulang dengan file berbeda'
+            ]
+          });
+        }
+        
         return res.status(400).json({
           status: 'error',
           message: `Form data error: ${err.message}`,
-          code: 'FORM_DATA_ERROR'
+          error_code: 'FORM_DATA_ERROR'
         });
       }
       next();
     });
   } else {
-    // Continue normally for JSON/URL-encoded requests
     next();
   }
 });
