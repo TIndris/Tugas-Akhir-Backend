@@ -180,14 +180,24 @@ export const createPayment = async (req, res) => {
       }
     }
 
-    // ✅ Validate file upload with better error handling
-    if (!req.file || !req.file.path) {
+    // ✅ Validate file upload with production compatibility
+    if (!req.file) {
       return res.status(400).json({
         status: 'error',
         message: 'Bukti transfer harus diupload',
         supported_formats: ['JPG', 'PNG', 'PDF'],
         max_size: '10MB'
       });
+    }
+
+    // ✅ PRODUCTION: Handle memory vs disk storage
+    let transferProofPath;
+    if (process.env.NODE_ENV === 'production') {
+      // In production (memory storage), we'll store the buffer
+      transferProofPath = req.file.buffer ? 'memory-buffer-stored' : req.file.path;
+    } else {
+      // In development (disk storage), use file path
+      transferProofPath = req.file.path;
     }
 
     // ✅ Check for existing payment
@@ -242,12 +252,13 @@ export const createPayment = async (req, res) => {
       userId: req.user._id,
       paymentType: payment_type,
       amount: paymentAmount,
-      transferProof: req.file.path,
+      transferProof: transferProofPath,  // Use production-safe path
+      transferProofBuffer: req.file.buffer, // Store buffer for production
       transferDetails: {
         sender_name: sender_name.trim(),
         transfer_amount: parseInt(transfer_amount),
-        transfer_date: transferDateValid,  // Date object
-        transfer_date_string: transfer_date, // Original string format
+        transfer_date: transferDateValid,
+        transfer_date_string: transfer_date,
         transfer_reference: transfer_reference || ''
       }
     };

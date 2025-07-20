@@ -3,14 +3,24 @@ import path from 'path';
 import fs from 'fs';
 import logger from '../config/logger.js';
 
-// ✅ REVERT: Simple storage configuration
+// ✅ FIXED: Production-compatible storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadPath = './uploads/payments';
-    if (!fs.existsSync(uploadPath)) {
-      fs.mkdirSync(uploadPath, { recursive: true });
+    // ✅ Use /tmp for serverless environments (Vercel/Lambda)
+    const uploadPath = process.env.NODE_ENV === 'production' 
+      ? '/tmp/payments'  // Serverless temp directory
+      : './uploads/payments';  // Local development
+
+    try {
+      if (!fs.existsSync(uploadPath)) {
+        fs.mkdirSync(uploadPath, { recursive: true });
+      }
+      cb(null, uploadPath);
+    } catch (error) {
+      logger.error('Failed to create upload directory:', error);
+      // ✅ Fallback to memory storage if directory creation fails
+      cb(null, '/tmp');
     }
-    cb(null, uploadPath);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -18,7 +28,13 @@ const storage = multer.diskStorage({
   }
 });
 
-// ✅ REVERT: Simple file filter
+// ✅ ALTERNATIVE: Use memory storage for production
+const memoryStorage = multer.memoryStorage();
+
+// ✅ PRODUCTION-SAFE: Choose storage based on environment
+const selectedStorage = process.env.NODE_ENV === 'production' ? memoryStorage : storage;
+
+// ✅ Simple file filter
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
   if (allowedTypes.includes(file.mimetype)) {
@@ -28,9 +44,9 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// ✅ REVERT: Simple upload configuration
+// ✅ PRODUCTION-SAFE: Upload configuration
 const upload = multer({
-  storage,
+  storage: selectedStorage,
   fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
@@ -40,7 +56,7 @@ const upload = multer({
   }
 });
 
-// ✅ REVERT: Simple uploadPaymentProof
+// ✅ PRODUCTION-SAFE: uploadPaymentProof
 export const uploadPaymentProof = (req, res, next) => {
   upload.single('transfer_proof')(req, res, (error) => {
     if (error) {
@@ -78,9 +94,18 @@ export const uploadPaymentProof = (req, res, next) => {
       });
     }
 
+    // ✅ PRODUCTION: Handle memory storage vs disk storage
+    if (process.env.NODE_ENV === 'production') {
+      // Memory storage - file is in req.file.buffer
+      req.file.path = `memory-storage-${Date.now()}`;
+      logger.info('File stored in memory for production');
+    } else {
+      // Disk storage - file is saved to disk
+      logger.info('File stored to disk:', req.file.path);
+    }
+
     next();
   });
 };
 
-// ✅ Keep existing export
 export default upload;
