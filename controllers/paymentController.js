@@ -1,5 +1,6 @@
 import { PaymentService } from '../services/paymentService.js';
 import Payment from '../models/Payment.js'; 
+import Booking from '../models/Booking.js'; // ✅ ADD: Missing import
 import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';

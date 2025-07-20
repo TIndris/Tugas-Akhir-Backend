@@ -68,7 +68,7 @@ app.use(cors({
 // Handle preflight requests
 app.options('*', cors());
 
-// ✅ UPDATED Body parser - Support JSON, URL-encoded, and Form Data
+// ✅ KEEP: Enhanced body parsing
 app.use(express.json({ 
   limit: '50mb',
   strict: false 
@@ -80,31 +80,7 @@ app.use(express.urlencoded({
   parameterLimit: 50000
 }));
 
-// ✅ ADD Form Data Support with Multer
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB file limit
-    fieldSize: 1024 * 1024,     // 1MB per field
-    fields: 20,                 // Max 20 fields
-    files: 5                    // Max 5 files per request
-  },
-  fileFilter: (req, file, cb) => {
-    // Allow common file types
-    const allowedTypes = [
-      'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-      'application/pdf', 'text/plain', 'image/svg+xml'
-    ];
-    
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`File type ${file.mimetype} not allowed`), false);
-    }
-  }
-});
-
-// ✅ ADD: Payment debugging middleware (TAMBAHKAN SETELAH BODY PARSER)
+// ✅ ADD: Payment debugging middleware (PINDAH KE SINI)
 app.use((req, res, next) => {
   if (req.path.includes('/payments') && req.method === 'POST') {
     console.log('🔍 Payment request debug:', {
@@ -115,25 +91,14 @@ app.use((req, res, next) => {
       userAgent: req.headers['user-agent'],
       hasBody: !!req.body,
       bodyKeys: req.body ? Object.keys(req.body) : [],
-      files: req.files ? req.files.length : 0,
       timestamp: new Date().toISOString()
     });
   }
   next();
 });
 
-// ✅ ADD: Enhanced error handling (TAMBAHKAN SEBELUM MULTER MIDDLEWARE)
+// ✅ KEEP: Enhanced error handling
 app.use((error, req, res, next) => {
-  // Handle specific multer errors
-  if (error instanceof multer.MulterError) {
-    logger.error('Multer error:', error);
-    return res.status(400).json({
-      status: 'error',
-      message: `Upload error: ${error.message}`,
-      error_code: error.code
-    });
-  }
-  
   // Handle JSON syntax errors
   if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
     logger.error('Bad JSON syntax:', error);
@@ -145,42 +110,6 @@ app.use((error, req, res, next) => {
   }
   
   next(error);
-});
-
-// ✅ ENHANCED FORM DATA MIDDLEWARE (REPLACE EXISTING)
-app.use((req, res, next) => {
-  const contentType = req.headers['content-type'];
-  
-  if (contentType && contentType.includes('multipart/form-data')) {
-    upload.any()(req, res, (err) => {
-      if (err) {
-        logger.error('Form data parsing error:', err);
-        
-        // Handle specific errors
-        if (err.message.includes('Unexpected end of form')) {
-          return res.status(400).json({
-            status: 'error',
-            message: 'Data form tidak lengkap atau corrupt. Pastikan semua field terisi.',
-            error_code: 'INCOMPLETE_FORM_DATA',
-            suggestions: [
-              'Periksa koneksi internet',
-              'Pastikan file tidak rusak',
-              'Coba upload ulang dengan file berbeda'
-            ]
-          });
-        }
-        
-        return res.status(400).json({
-          status: 'error',
-          message: `Form data error: ${err.message}`,
-          error_code: 'FORM_DATA_ERROR'
-        });
-      }
-      next();
-    });
-  } else {
-    next();
-  }
 });
 
 // Logging middleware (simplified for production)

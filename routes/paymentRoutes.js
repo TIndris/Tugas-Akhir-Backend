@@ -9,7 +9,7 @@ import {
   getBankInfo
 } from '../controllers/paymentController.js';
 import { authenticateToken, restrictTo } from '../middleware/auth.js';
-import { uploadPaymentProof } from '../middleware/upload.js'; // ✅ CHANGED: Import uploadPaymentProof instead of upload
+import { uploadPaymentProof } from '../middleware/upload.js'; // ✅ CORRECT import
 
 const router = express.Router();
 
@@ -19,7 +19,7 @@ router.get('/bank-info', getBankInfo);
 // Protect all other routes
 router.use(authenticateToken);
 
-// Customer routes - ✅ CHANGED: Use uploadPaymentProof instead of upload.single()
+// Customer routes - ✅ CORRECT middleware order
 router.post('/', uploadPaymentProof, restrictTo('customer'), createPayment);
 router.get('/my-payments', restrictTo('customer'), getUserPayments);
 
