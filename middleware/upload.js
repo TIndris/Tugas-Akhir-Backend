@@ -1,6 +1,9 @@
 import multer from 'multer';
 import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import cloudinary from '../config/cloudinary.js';
+import path from 'path';
+import fs from 'fs';
+import logger from '../config/logger.js';
 
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -57,6 +60,49 @@ const debugMulter = (req, res, next) => {
   };
   
   wrappedNext();
+};
+
+// ✅ ADD: Better error handling for payment uploads
+export const uploadPaymentProof = (req, res, next) => {
+  upload.single('transfer_proof')(req, res, (error) => {
+    if (error) {
+      logger.error('Payment proof upload error:', error);
+      
+      if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({
+            status: 'error',
+            message: 'Ukuran file terlalu besar (maksimal 10MB)',
+            error_code: 'FILE_TOO_LARGE'
+          });
+        }
+        if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+          return res.status(400).json({
+            status: 'error',
+            message: 'Field file tidak sesuai (gunakan "transfer_proof")',
+            error_code: 'WRONG_FIELD_NAME'
+          });
+        }
+      }
+      
+      return res.status(400).json({
+        status: 'error',
+        message: 'Error saat upload file',
+        error: error.message
+      });
+    }
+
+    // ✅ Validate file existence
+    if (!req.file) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'File bukti transfer harus diupload',
+        accepted_formats: ['image/jpeg', 'image/png', 'application/pdf']
+      });
+    }
+
+    next();
+  });
 };
 
 export default upload;

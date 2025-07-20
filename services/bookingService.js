@@ -9,7 +9,7 @@ export class BookingService {
   // ============= CONSTANTS =============
   static BOOKING_STATUSES = {
     PENDING: 'pending',
-    CONFIRMED: 'confirmed',
+    CONFIRMED: 'confirmed', 
     CANCELLED: 'cancelled',
     COMPLETED: 'completed'
   };

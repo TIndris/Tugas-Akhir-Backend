@@ -2,41 +2,51 @@ import { PaymentService } from '../services/paymentService.js';
 import Payment from '../models/Payment.js'; 
 import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
+import mongoose from 'mongoose';
+import moment from 'moment-timezone';
 
 export const createPayment = async (req, res) => {
   try {
+    console.log('=== PAYMENT CREATE DEBUG ===');
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file);
+    console.log('User:', req.user?._id);
+
+    // ✅ FIXED: Destructure all fields from form-data
     const { 
       booking_id, 
       payment_type, 
       sender_name, 
       transfer_amount, 
-      transfer_date,  
+      transfer_date,
       transfer_reference 
     } = req.body;
 
-    
-    const validateTransferDate = (transferDateStr) => {
+    // ✅ Enhanced validation with detailed error messages
+    const validateTransferDate = (dateString) => {
       try {
-        // Check format YYYY-MM-DD
-        const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-        if (!datePattern.test(transferDateStr)) {
-          throw new Error('Format tanggal tidak valid. Gunakan format: YYYY-MM-DD (contoh: 2025-07-06)');
+        if (!dateString || typeof dateString !== 'string') {
+          throw new Error('Tanggal transfer harus diisi');
         }
-        
-        const transferDate = new Date(transferDateStr + 'T00:00:00.000Z');
+
+        // Parse YYYY-MM-DD format
+        const [year, month, day] = dateString.split('-').map(num => parseInt(num));
+        if (!year || !month || !day || year < 2020 || month < 1 || month > 12 || day < 1 || day > 31) {
+          throw new Error('Format tanggal tidak valid (gunakan YYYY-MM-DD)');
+        }
+
+        const transferDate = new Date(year, month - 1, day);
         const today = new Date();
-        today.setHours(0, 0, 0, 0); // Reset time to 00:00:00
+        today.setHours(0, 0, 0, 0);
         
         if (isNaN(transferDate.getTime())) {
           throw new Error('Tanggal tidak valid');
         }
         
-        // Check not in future
         if (transferDate > today) {
           throw new Error('Tanggal transfer tidak boleh di masa depan');
         }
         
-        // Check not too old (30 days)
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         thirtyDaysAgo.setHours(0, 0, 0, 0);
@@ -52,17 +62,29 @@ export const createPayment = async (req, res) => {
       }
     };
 
-    // Validate required fields
+    // ✅ Validate required fields with better error messages
     if (!booking_id || !payment_type || !sender_name || !transfer_amount || !transfer_date) {
       return res.status(400).json({
         status: 'error',
         message: 'Semua field wajib diisi',
-        required_fields: ['booking_id', 'payment_type', 'sender_name', 'transfer_amount', 'transfer_date'],
-        transfer_date_format: 'YYYY-MM-DD (contoh: 2025-07-06)'
+        missing_fields: {
+          booking_id: !booking_id ? 'ID booking harus diisi' : null,
+          payment_type: !payment_type ? 'Jenis pembayaran harus dipilih' : null,
+          sender_name: !sender_name ? 'Nama pengirim harus diisi' : null,
+          transfer_amount: !transfer_amount ? 'Jumlah transfer harus diisi' : null,
+          transfer_date: !transfer_date ? 'Tanggal transfer harus diisi' : null
+        },
+        example: {
+          booking_id: "ObjectId dari booking",
+          payment_type: "dp_payment atau full_payment",
+          sender_name: "John Doe",
+          transfer_amount: "250000",
+          transfer_date: "2025-07-20"
+        }
       });
     }
 
-    // Validate transfer date
+    // ✅ Validate transfer date
     let transferDateValid;
     try {
       transferDateValid = validateTransferDate(transfer_date);
@@ -70,47 +92,80 @@ export const createPayment = async (req, res) => {
       return res.status(400).json({
         status: 'error',
         message: dateError.message,
-        example_format: '2025-07-06'
+        example_format: '2025-07-20',
+        received: transfer_date
       });
     }
 
-    // Validate payment type
+    // ✅ Validate payment type
     const VALID_PAYMENT_TYPES = ['dp_payment', 'full_payment'];
     if (!VALID_PAYMENT_TYPES.includes(payment_type)) {
       return res.status(400).json({
         status: 'error',
         message: 'Tipe pembayaran tidak valid',
-        valid_types: VALID_PAYMENT_TYPES
+        valid_types: VALID_PAYMENT_TYPES,
+        received: payment_type
       });
     }
 
-    // Determine payment amount
+    // ✅ Validate booking exists and ownership
+    if (!mongoose.Types.ObjectId.isValid(booking_id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Format ID booking tidak valid',
+        received: booking_id
+      });
+    }
+
+    const booking = await Booking.findOne({
+      _id: booking_id,
+      pelanggan: req.user._id
+    }).populate('lapangan');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan atau bukan milik Anda',
+        booking_id: booking_id,
+        user_id: req.user._id
+      });
+    }
+
+    // ✅ Determine payment amount with better validation
     let paymentAmount;
     if (payment_type === 'dp_payment') {
       paymentAmount = 50000; // Fixed DP amount
+      if (parseInt(transfer_amount) !== paymentAmount) {
+        return res.status(400).json({
+          status: 'error',
+          message: `DP harus tepat Rp ${paymentAmount.toLocaleString('id-ID')}`,
+          expected: paymentAmount,
+          received: parseInt(transfer_amount)
+        });
+      }
     } else if (payment_type === 'full_payment') {
       paymentAmount = parseInt(transfer_amount);
+      if (paymentAmount !== booking.harga) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Jumlah pembayaran penuh harus sesuai total booking',
+          booking_total: booking.harga,
+          received: paymentAmount
+        });
+      }
     }
 
-    // Validate transfer amount matches payment type
-    if (parseInt(transfer_amount) !== paymentAmount) {
-      return res.status(400).json({
-        status: 'error',
-        message: payment_type === 'dp_payment' 
-          ? `DP harus tepat Rp ${paymentAmount.toLocaleString('id-ID')}`
-          : 'Jumlah transfer harus sesuai dengan total booking'
-      });
-    }
-
-    // Validate file upload
+    // ✅ Validate file upload with better error handling
     if (!req.file || !req.file.path) {
       return res.status(400).json({
         status: 'error',
-        message: 'Bukti transfer harus diupload'
+        message: 'Bukti transfer harus diupload',
+        supported_formats: ['JPG', 'PNG', 'PDF'],
+        max_size: '10MB'
       });
     }
 
-    // Check for existing payment
+    // ✅ Check for existing payment
     const existingPayment = await Payment.findOne({
       booking: booking_id,
       status: { $in: ['pending', 'verified'] }
@@ -123,12 +178,13 @@ export const createPayment = async (req, res) => {
         existing_payment: {
           id: existingPayment._id,
           status: existingPayment.status,
-          amount: existingPayment.amount
+          amount: existingPayment.amount,
+          created_at: existingPayment.createdAt
         }
       });
     }
 
-    // Handle rejected payments
+    // ✅ Handle rejected payments - mark as replaced
     const rejectedPayments = await Payment.find({
       booking: booking_id,
       status: 'rejected'
@@ -145,32 +201,7 @@ export const createPayment = async (req, res) => {
       );
     }
 
-    // Prepare payment data
-    const paymentData = {
-      bookingId: booking_id,
-      userId: req.user._id,
-      paymentType: payment_type,
-      amount: paymentAmount,
-      transferProof: req.file.path,
-      transferDetails: {
-        sender_name,
-        transfer_amount: parseInt(transfer_amount),
-        transfer_date: transferDateValid,  // ← Store as Date object
-        transfer_date_string: transfer_date, // ← Store original string format
-        transfer_reference: transfer_reference || ''
-      }
-    };
-
-    // Create payment
-    const payment = await PaymentService.createPayment(paymentData);
-    
-    // Get payment summary
-    const paymentSummary = PaymentService.calculatePaymentSummary(
-      payment.total_booking_amount, 
-      payment.payment_type
-    );
-
-    // Handle bank details
+    // ✅ Get bank details with error handling
     let bankDetails = null;
     let availableBanks = [];
     try {
@@ -180,6 +211,52 @@ export const createPayment = async (req, res) => {
       logger.warn('Bank details unavailable during payment creation:', bankError.message);
     }
 
+    // ✅ Prepare payment data for service
+    const paymentData = {
+      bookingId: booking_id,
+      userId: req.user._id,
+      paymentType: payment_type,
+      amount: paymentAmount,
+      transferProof: req.file.path,
+      transferDetails: {
+        sender_name: sender_name.trim(),
+        transfer_amount: parseInt(transfer_amount),
+        transfer_date: transferDateValid,  // Date object
+        transfer_date_string: transfer_date, // Original string format
+        transfer_reference: transfer_reference || ''
+      }
+    };
+
+    // ✅ Create payment using service
+    const payment = await PaymentService.createPayment(paymentData);
+    
+    // ✅ Get payment summary
+    const paymentSummary = PaymentService.calculatePaymentSummary(
+      payment.total_booking_amount, 
+      payment.payment_type
+    );
+
+    // ✅ Clear caches
+    try {
+      if (client && client.isOpen) {
+        await client.del('payments:pending');
+        await client.del(`payments:user:${req.user._id}`);
+        await client.del(`bookings:${req.user._id}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    // ✅ Log successful payment creation
+    logger.info(`Payment created successfully: ${payment._id}`, {
+      user: req.user._id,
+      booking: booking_id,
+      amount: paymentAmount,
+      type: payment_type,
+      replaced_rejected: rejectedPayments.length
+    });
+
+    // ✅ Enhanced response
     res.status(201).json({
       status: 'success',
       message: rejectedPayments.length > 0 
@@ -196,25 +273,47 @@ export const createPayment = async (req, res) => {
           transfer_details: {
             sender_name: payment.transfer_details.sender_name,
             transfer_amount: payment.transfer_details.transfer_amount,
-            transfer_date: transfer_date, // ← Return original string format
-            transfer_date_display: formatDateDisplay(transfer_date), // ← User-friendly display
+            transfer_date: transfer_date, 
+            transfer_date_display: moment(transferDateValid).format('DD MMMM YYYY'),
             transfer_reference: payment.transfer_details.transfer_reference
           },
           transfer_proof: payment.transfer_proof,
-          submittedAtWIB: formatDateTimeWIB(payment.createdAt)
+          submittedAtWIB: moment(payment.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
         },
         payment_summary: paymentSummary,
         bank_details: bankDetails,
         available_banks: availableBanks,
-        note: !bankDetails ? 'Info rekening tidak tersedia, silakan hubungi admin' : null
+        note: !bankDetails ? 'Info rekening tidak tersedia, silakan hubungi admin' : null,
+        next_steps: [
+          'Pembayaran Anda sedang diproses',
+          'Tim kasir akan memverifikasi dalam 1x24 jam',
+          'Anda akan mendapat notifikasi setelah verifikasi',
+          'Status dapat dicek di halaman "Booking Saya"'
+        ]
       }
     });
 
   } catch (error) {
     logger.error('Create payment error:', error);
-    res.status(400).json({
+    
+    // ✅ Enhanced error response
+    res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Internal server error',
+      error: {
+        type: error.name || 'UnknownError',
+        message: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
+      debug_info: process.env.NODE_ENV === 'development' ? {
+        body: req.body,
+        file: req.file ? {
+          filename: req.file.filename,
+          path: req.file.path,
+          size: req.file.size
+        } : null,
+        user_id: req.user?._id
+      } : undefined
     });
   }
 };
