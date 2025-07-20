@@ -1,4 +1,4 @@
-// controllers/bookingController.js - FIXED (Remove duplicates)
+// controllers/bookingController.js - FIXED (Add missing exports)
 import { BookingService } from '../services/bookingService.js';
 import Booking from '../models/Booking.js';
 import Field from '../models/Field.js';
@@ -66,7 +66,8 @@ export const createBooking = async (req, res) => {
   }
 };
 
-export const checkAvailability = async (req, res) => {
+// ✅ FIX: Rename to match routes import
+export const getAvailability = async (req, res) => {
   try {
     const { lapangan, tanggal, jam } = req.query;
     
@@ -112,7 +113,116 @@ export const checkAvailability = async (req, res) => {
   }
 };
 
-// ✅ SINGLE updateBooking function (KEEP THIS ONE ONLY)
+// ✅ ADD: Create alias for backward compatibility
+export const checkAvailability = getAvailability;
+
+// Get user bookings - RENAMED for clarity
+export const getMyBookings = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const cacheKey = `bookings:${userId}`;
+    
+    // Check cache first
+    let cachedBookings = null;
+    try {
+      if (client && client.isOpen) {
+        cachedBookings = await client.get(cacheKey);
+      }
+    } catch (redisError) {
+      logger.warn('Redis bookings cache read error:', redisError);
+    }
+
+    if (cachedBookings) {
+      logger.info('Serving user bookings from cache');
+      const bookings = JSON.parse(cachedBookings);
+      return res.json({
+        status: 'success',
+        results: bookings.length,
+        data: { bookings }
+      });
+    }
+
+    // HAPUS .lean() agar virtual fields WIB aktif
+    const bookings = await Booking.find({ pelanggan: userId })
+      .populate('lapangan', 'jenis_lapangan nama')
+      .populate('kasir', 'name');
+
+    // Cache for 3 minutes
+    try {
+      if (client && client.isOpen) {
+        await client.setEx(cacheKey, 180, JSON.stringify(bookings));
+        logger.info('User bookings cached successfully');
+      }
+    } catch (redisError) {
+      logger.warn('Redis bookings cache save error:', redisError);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      results: bookings.length,
+      data: { bookings }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      message: error.message
+    });
+  }
+};
+
+// ✅ ADD: Create alias for routes
+export const getUserBookings = getMyBookings;
+
+// Get single booking by ID
+export const getBookingById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    // Find booking and check ownership
+    const booking = await Booking.findOne({
+      _id: id,
+      pelanggan: userId
+    })
+    .populate('lapangan', 'nama jenis_lapangan harga')
+    .populate('kasir', 'name');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking berhasil diambil',
+      data: { booking }
+    });
+
+  } catch (error) {
+    logger.error(`Get booking by ID error: ${error.message}`, {
+      bookingId: req.params.id,
+      userId: req.user._id,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil booking'
+    });
+  }
+};
+
+// ✅ SINGLE updateBooking function
 export const updateBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -185,7 +295,7 @@ export const updateBooking = async (req, res) => {
   }
 };
 
-// ✅ SINGLE deleteBooking function (KEEP THIS ONE ONLY)
+// ✅ SINGLE deleteBooking function
 export const deleteBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -249,60 +359,6 @@ export const deleteBooking = async (req, res) => {
 
   } catch (error) {
     logger.error(`Delete booking error: ${error.message}`);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-};
-
-// Get user bookings dengan cache - FIXED untuk WIB format
-export const getMyBookings = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const cacheKey = `bookings:${userId}`;
-    
-    // Check cache first
-    let cachedBookings = null;
-    try {
-      if (client && client.isOpen) {
-        cachedBookings = await client.get(cacheKey);
-      }
-    } catch (redisError) {
-      logger.warn('Redis bookings cache read error:', redisError);
-    }
-
-    if (cachedBookings) {
-      logger.info('Serving user bookings from cache');
-      const bookings = JSON.parse(cachedBookings);
-      return res.json({
-        status: 'success',
-        results: bookings.length,
-        data: { bookings }
-      });
-    }
-
-    // HAPUS .lean() agar virtual fields WIB aktif
-    const bookings = await Booking.find({ pelanggan: userId })
-      .populate('lapangan', 'jenis_lapangan nama')
-      .populate('kasir', 'name');
-
-    // Cache for 3 minutes
-    try {
-      if (client && client.isOpen) {
-        await client.setEx(cacheKey, 180, JSON.stringify(bookings));
-        logger.info('User bookings cached successfully');
-      }
-    } catch (redisError) {
-      logger.warn('Redis bookings cache save error:', redisError);
-    }
-
-    res.status(200).json({
-      status: 'success',
-      results: bookings.length,
-      data: { bookings }
-    });
-  } catch (error) {
     res.status(500).json({
       status: 'error',
       message: error.message
@@ -834,3 +890,7 @@ export const getAllBookings = async (req, res) => {
     });
   }
 };
+
+// ✅ ADD: Export for routes compatibility
+export const getBookings = getAllBookings;
+export const getCashierBookings = getAllBookingsForCashier;
