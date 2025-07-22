@@ -63,27 +63,32 @@ export class BookingService {
   // ✅ Availability check
   static async checkSlotAvailability(lapanganId, tanggalBooking, jamBooking, durasi, excludeBookingId = null) {
     try {
-      // Validate parameters
+      // Strict parameter validation
       if (!mongoose.Types.ObjectId.isValid(lapanganId)) {
-        throw new Error(`Invalid lapanganId format: ${lapanganId}`);
+        throw new Error(`Invalid lapanganId: ${lapanganId}`);
       }
 
-      if (!durasi || isNaN(parseInt(durasi))) {
-        throw new Error('Durasi harus berupa angka yang valid');
+      const durasiInt = parseInt(durasi);
+      if (isNaN(durasiInt) || durasiInt <= 0) {
+        throw new Error(`Invalid durasi: ${durasi}`);
       }
 
       if (excludeBookingId && !mongoose.Types.ObjectId.isValid(excludeBookingId)) {
-        throw new Error(`Invalid excludeBookingId format: ${excludeBookingId}`);
+        throw new Error(`Invalid excludeBookingId: ${excludeBookingId}`);
       }
 
-      // Convert to proper types
+      // Time range calculation
       const newBookingStartHour = parseInt(jamBooking.split(':')[0]);
-      const newBookingEndHour = newBookingStartHour + parseInt(durasi);
+      const newBookingEndHour = newBookingStartHour + durasiInt;
       
-      // Build query filter
+      // ✅ NORMALIZE: Date consistency
+      const searchDate = new Date(tanggalBooking);
+      searchDate.setUTCHours(0, 0, 0, 0);
+      
+      // Build filter with explicit ObjectId
       const filter = {
         lapangan: new mongoose.Types.ObjectId(lapanganId),
-        tanggal_booking: new Date(tanggalBooking),
+        tanggal_booking: searchDate,
         status_pemesanan: { $in: ['pending', 'confirmed'] }
       };
       
@@ -93,25 +98,23 @@ export class BookingService {
 
       const existingBookings = await Booking.find(filter);
       
-      // Check for time overlap
+      // Overlap detection
       for (const booking of existingBookings) {
         const existingStartHour = parseInt(booking.jam_booking.split(':')[0]);
         const existingEndHour = existingStartHour + booking.durasi;
         
-        // Overlap detection logic
-        const hasOverlap = (
-          (newBookingStartHour < existingEndHour) && (newBookingEndHour > existingStartHour)
-        );
+        // ✅ OVERLAP LOGIC: (Start1 < End2) AND (End1 > Start2)
+        const hasOverlap = (newBookingStartHour < existingEndHour) && (newBookingEndHour > existingStartHour);
         
         if (hasOverlap) {
-          return false;
+          return false; // Overlap detected
         }
       }
       
-      return true;
-      
+      return true; // No overlap
+    
     } catch (error) {
-      logger.error('Error checking slot availability:', error);
+      logger.error('Slot availability check error:', error);
       throw error;
     }
   }
@@ -125,10 +128,10 @@ export class BookingService {
   static async createBooking(bookingData) {
     const { userId, lapanganId, tanggalBooking, jamBooking, durasi } = bookingData;
     
-    // Validate field
+    // Validate field exists and available
     const field = await this.validateFieldForBooking(lapanganId);
     
-    // Check slot availability with proper overlap detection
+    // ✅ DOUBLE CHECK: Availability via service (backup check)
     const isAvailable = await this.checkSlotAvailability(
       lapanganId, 
       tanggalBooking, 
@@ -143,14 +146,18 @@ export class BookingService {
     // Calculate price
     const totalHarga = this.calculateBookingPrice(field, durasi);
     
-    // Create booking
+    // ✅ NORMALIZE: Date untuk consistency
+    const normalizedDate = new Date(tanggalBooking);
+    normalizedDate.setUTCHours(0, 0, 0, 0);
+    
+    // Create booking with normalized date
     const booking = await Booking.create({
       pelanggan: userId,
       lapangan: lapanganId,
       jenis_lapangan: field.jenis_lapangan,
-      tanggal_booking: new Date(tanggalBooking),
+      tanggal_booking: normalizedDate, // ✅ Use normalized date
       jam_booking: jamBooking,
-      durasi,
+      durasi: parseInt(durasi), // ✅ Ensure integer
       harga: totalHarga,
       status_pemesanan: 'pending',
       payment_status: 'no_payment'

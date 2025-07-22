@@ -17,7 +17,7 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // ✅ FIXED: Validate ObjectId format
+    // ✅ VALIDATE: ObjectId format
     if (!mongoose.Types.ObjectId.isValid(lapangan_id)) {
       return res.status(400).json({
         status: 'error',
@@ -26,59 +26,86 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // ✅ FIXED: Manual overlap check BEFORE service call
+    // ✅ VALIDATE: durasi format
+    const durasiInt = parseInt(durasi);
+    if (isNaN(durasiInt) || durasiInt <= 0 || durasiInt > 8) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Durasi harus berupa angka positif antara 1-8 jam'
+      });
+    }
+
+    // ✅ CRITICAL FIX: Manual overlap check dengan ObjectId yang benar
     const newStart = parseInt(jam_booking.split(':')[0]);
-    const newEnd = newStart + parseInt(durasi);
+    const newEnd = newStart + durasiInt;
+    
+    // ✅ FIXED: Convert lapangan_id to ObjectId dan tanggal yang benar
+    const bookingDate = new Date(tanggal_booking);
+    bookingDate.setUTCHours(0, 0, 0, 0); // Set ke midnight UTC
     
     const existingBookings = await Booking.find({
-      lapangan: lapangan_id,
-      tanggal_booking: new Date(tanggal_booking),
+      lapangan: new mongoose.Types.ObjectId(lapangan_id), // ✅ EXPLICIT ObjectId conversion
+      tanggal_booking: bookingDate, // ✅ Normalized date
       status_pemesanan: { $in: ['pending', 'confirmed'] }
     });
     
-    for (const existing of existingBookings) {
-      const existingStart = parseInt(existing.jam_booking.split(':')[0]);
-      const existingEnd = existingStart + existing.durasi;
-      
-      const hasOverlap = (newStart < existingEnd) && (newEnd > existingStart);
-      
-      if (hasOverlap) {
-        return res.status(409).json({
-          status: 'error',
-          message: 'Slot waktu tidak tersedia atau bertabrakan dengan booking lain',
-          error_code: 'SLOT_CONFLICT',
-          conflicting_booking: {
-            time_range: `${existingStart}:00 - ${existingEnd}:00`,
-            status: existing.status_pemesanan
-          },
-          requested_booking: {
-            time_range: `${newStart}:00 - ${newEnd}:00`
-          }
-        });
+    // ✅ FORCE LOG: Always log untuk debugging
+    if (existingBookings.length === 0) {
+      // Jika tidak ada existing booking, langsung lanjut tanpa error
+    } else {
+      // ✅ CHECK OVERLAP: Loop through existing bookings
+      for (const existing of existingBookings) {
+        const existingStart = parseInt(existing.jam_booking.split(':')[0]);
+        const existingEnd = existingStart + existing.durasi;
+        
+        const hasOverlap = (newStart < existingEnd) && (newEnd > existingStart);
+        
+        if (hasOverlap) {
+          return res.status(409).json({
+            status: 'error',
+            message: 'Slot waktu tidak tersedia atau bertabrakan dengan booking lain',
+            error_code: 'SLOT_CONFLICT',
+            debug_info: {
+              new_booking: {
+                time_range: `${newStart}:00 - ${newEnd}:00`,
+                date: tanggal_booking
+              },
+              conflicting_booking: {
+                id: existing._id,
+                time_range: `${existingStart}:00 - ${existingEnd}:00`,
+                status: existing.status_pemesanan,
+                customer: existing.pelanggan
+              },
+              total_existing_bookings: existingBookings.length
+            }
+          });
+        }
       }
     }
 
-    // ✅ If no overlap, proceed with service call
+    // ✅ If no overlap detected, create booking via service
     const { booking, field } = await BookingService.createBooking({
       userId: req.user._id,
       lapanganId: lapangan_id,
       tanggalBooking: tanggal_booking,
       jamBooking: jam_booking,
-      durasi
+      durasi: durasiInt
     });
 
-    const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;
+    // ✅ Cache invalidation
     try {
       if (client && client.isOpen) {
-        await client.del(availabilityCacheKey);
+        await client.del(`availability:${lapangan_id}:${tanggal_booking}`);
         await client.del(`bookings:${req.user._id}`);
       }
     } catch (redisError) {
-      // Silent fail for cache
+      // Silent cache error
     }
 
     logger.info(`Booking created: ${booking._id}`, {
       user: req.user._id,
+      field: lapangan_id,
+      timeSlot: `${jam_booking} (${durasi}h)`,
       action: 'CREATE_BOOKING'
     });
 
@@ -91,6 +118,7 @@ export const createBooking = async (req, res) => {
   } catch (error) {
     logger.error(`Booking creation error: ${error.message}`, {
       user: req.user._id,
+      requestBody: req.body,
       stack: error.stack
     });
     
