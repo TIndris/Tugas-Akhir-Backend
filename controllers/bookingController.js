@@ -210,35 +210,12 @@ export const updateBooking = async (req, res) => {
     const { tanggal_booking, jam_booking, durasi, catatan } = req.body;
     const userId = req.user._id;
 
-    // ✅ FIXED: Use service validation
+    // ✅ FIXED: Use service validation with proper error handling
     const booking = await BookingService.validateBookingUpdate(id, userId, req.body);
     
-    // ✅ Check conflicts if time is being changed
-    if (tanggal_booking && jam_booking) {
-      const field = booking.lapangan;
-      
-      // Validate operating hours with error handling
-      try {
-        BookingService.validateOperatingHours(field, jam_booking, durasi || booking.durasi);
-      } catch (error) {
-        logger.warn('Operating hours validation skipped:', error.message);
-      }
-      
-      const isAvailable = await BookingService.checkSlotAvailability(
-        field._id, 
-        tanggal_booking, 
-        jam_booking, 
-        id
-      );
-      
-      if (!isAvailable) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Slot waktu sudah dibooking oleh user lain'
-        });
-      }
-    }
-
+    // ✅ NOTE: validateBookingUpdate already handles slot availability check
+    // No need to check again here as it's already done in the service
+    
     // ✅ Update operation
     if (tanggal_booking) booking.tanggal_booking = new Date(tanggal_booking);
     if (jam_booking) booking.jam_booking = jam_booking;

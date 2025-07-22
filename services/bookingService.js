@@ -61,20 +61,81 @@ export class BookingService {
   }
   
   // ✅ Availability check
-  static async checkSlotAvailability(lapanganId, tanggalBooking, jamBooking, excludeBookingId = null) {
-    const filter = {
-      lapangan: lapanganId,
-      tanggal_booking: new Date(tanggalBooking),
-      jam_booking: jamBooking,
-      status_pemesanan: { $in: ['pending', 'confirmed'] }
-    };
-    
-    if (excludeBookingId) {
-      filter._id = { $ne: excludeBookingId };
+  static async checkSlotAvailability(lapanganId, tanggalBooking, jamBooking, durasi, excludeBookingId = null) {
+    try {
+      console.log('🔍 checkSlotAvailability called with:', {
+        lapanganId: lapanganId,
+        tanggalBooking: tanggalBooking,
+        jamBooking: jamBooking,
+        durasi: durasi,
+        excludeBookingId: excludeBookingId
+      });
+
+      // ✅ CRITICAL: Validate lapanganId as ObjectId
+      if (!mongoose.Types.ObjectId.isValid(lapanganId)) {
+        throw new Error(`Invalid lapanganId format: ${lapanganId}`);
+      }
+
+      // ✅ CRITICAL: Validate excludeBookingId if provided
+      if (excludeBookingId && !mongoose.Types.ObjectId.isValid(excludeBookingId)) {
+        throw new Error(`Invalid excludeBookingId format: ${excludeBookingId}`);
+      }
+
+      // ✅ VALIDATE: durasi parameter
+      if (!durasi || isNaN(parseInt(durasi))) {
+        throw new Error('Durasi harus berupa angka yang valid');
+      }
+
+      // Convert to proper types
+      const newBookingStartHour = parseInt(jamBooking.split(':')[0]);
+      const newBookingEndHour = newBookingStartHour + parseInt(durasi);
+      
+      console.log(`🔍 Checking availability for ${jamBooking} (${newBookingStartHour}:00 - ${newBookingEndHour}:00)`);
+      
+      // ✅ SAFE: Build filter with proper ObjectId conversion
+      const filter = {
+        lapangan: new mongoose.Types.ObjectId(lapanganId),
+        tanggal_booking: new Date(tanggalBooking),
+        status_pemesanan: { $in: ['pending', 'confirmed'] }
+      };
+      
+      if (excludeBookingId) {
+        filter._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
+      }
+
+      console.log('📊 Query filter:', filter);
+      
+      const existingBookings = await Booking.find(filter);
+      console.log(`📊 Found ${existingBookings.length} existing bookings`);
+      
+      // ✅ Check for time overlap with each existing booking
+      for (const booking of existingBookings) {
+        const existingStartHour = parseInt(booking.jam_booking.split(':')[0]);
+        const existingEndHour = existingStartHour + booking.durasi;
+        
+        console.log(`⏰ Existing booking: ${booking.jam_booking} (${existingStartHour}:00 - ${existingEndHour}:00)`);
+        
+        // ✅ OVERLAP DETECTION LOGIC
+        const hasOverlap = (
+          (newBookingStartHour < existingEndHour) && (newBookingEndHour > existingStartHour)
+        );
+        
+        if (hasOverlap) {
+          console.log(`❌ OVERLAP DETECTED!`);
+          console.log(`   New: ${newBookingStartHour}:00 - ${newBookingEndHour}:00`);
+          console.log(`   Existing: ${existingStartHour}:00 - ${existingEndHour}:00`);
+          return false;
+        }
+      }
+      
+      console.log(`✅ No overlap found - slot available`);
+      return true;
+      
+    } catch (error) {
+      console.error('❌ checkSlotAvailability error:', error);
+      logger.error('Error checking slot availability:', error);
+      throw error;
     }
-    
-    const existingBooking = await Booking.findOne(filter);
-    return !existingBooking;
   }
   
   // ✅ Price calculation
@@ -97,12 +158,13 @@ export class BookingService {
       logger.warn('Operating hours validation skipped:', error.message);
     }
     
-    // ✅ FIXED: Check availability with durasi parameter
+    // ✅ FIXED: Check availability with correct parameters
     const isAvailable = await this.checkSlotAvailability(
       lapanganId, 
       tanggalBooking, 
       jamBooking, 
-      durasi  // ✅ ADD: Pass durasi to check overlaps
+      durasi,  // ✅ PASS durasi parameter
+      null     // ✅ No excludeBookingId for new booking
     );
     
     if (!isAvailable) {
@@ -149,18 +211,18 @@ export class BookingService {
 
     // If updating time-related fields, check for conflicts
     if (updateData.tanggal_booking || updateData.jam_booking || updateData.durasi) {
-      const lapanganId = booking.lapangan;
+      const lapanganId = booking.lapangan._id;  // ✅ GET _id from populated field
       const tanggal = updateData.tanggal_booking || booking.tanggal_booking;
       const jam = updateData.jam_booking || booking.jam_booking;
       const durasi = updateData.durasi || booking.durasi;
       
-      // ✅ FIXED: Check availability excluding current booking
+      // ✅ FIXED: Check availability with correct parameter order
       const isAvailable = await this.checkSlotAvailability(
-        lapanganId, 
-        tanggal, 
-        jam, 
-        durasi,
-        bookingId  // Exclude current booking from conflict check
+        lapanganId,    // lapanganId
+        tanggal,       // tanggalBooking  
+        jam,           // jamBooking
+        durasi,        // ✅ durasi parameter
+        bookingId      // ✅ excludeBookingId
       );
       
       if (!isAvailable) {
