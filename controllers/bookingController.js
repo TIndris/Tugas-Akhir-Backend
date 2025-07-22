@@ -1,6 +1,5 @@
 import BookingService from '../services/bookingService.js';
 import Booking from '../models/Booking.js';
-import Field from '../models/Field.js';
 import moment from 'moment-timezone';
 import mongoose from 'mongoose';
 import logger from '../config/logger.js';
@@ -62,24 +61,31 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// ✅ FIXED: getAvailability function with correct JSON structure
+// ✅ REPLACE Line 66-78 getAvailability method
 export const getAvailability = async (req, res) => {
   try {
-    const { lapangan, tanggal, jam } = req.query;
+    const { lapangan, tanggal, jam, durasi } = req.query;  // ✅ ADD durasi parameter
     
     if (!lapangan || !tanggal || !jam) {
       return res.status(400).json({
         status: 'error',
-        message: 'Parameter lapangan, tanggal, dan jam harus diisi'
+        message: 'Parameter lapangan, tanggal, jam, dan durasi harus diisi'  // ✅ UPDATE message
       });
     }
 
     const field = await BookingService.validateFieldForBooking(lapangan);
-    const isAvailable = await BookingService.checkSlotAvailability(lapangan, tanggal, jam);
+    
+    // ✅ FIXED: Pass durasi parameter to checkSlotAvailability
+    const isAvailable = await BookingService.checkSlotAvailability(
+      lapangan, 
+      tanggal, 
+      jam,
+      durasi || 1  // ✅ ADD durasi parameter (default 1 if not provided)
+    );
 
     res.status(200).json({
       status: 'success',
-      message: isAvailable ? 'Slot tersedia' : 'Slot sudah dibooking',
+      message: isAvailable ? 'Slot tersedia' : 'Slot sudah dibooking atau bertabrakan',  // ✅ UPDATE message
       data: {
         is_available: isAvailable,
         field: {
@@ -91,10 +97,11 @@ export const getAvailability = async (req, res) => {
         },
         slot: {
           date: tanggal,
-          time: jam
+          time: jam,
+          duration: durasi || 1  // ✅ ADD duration in response
         }
       }
-    }); // ✅ FIXED: Properly closed JSON response
+    });
 
   } catch (error) {
     logger.error(`Availability check error: ${error.message}`, {

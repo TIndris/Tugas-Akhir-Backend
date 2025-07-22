@@ -68,21 +68,17 @@ export class BookingService {
         tanggalBooking: tanggalBooking,
         jamBooking: jamBooking,
         durasi: durasi,
+        durasiType: typeof durasi,
         excludeBookingId: excludeBookingId
       });
 
-      // ✅ CRITICAL: Validate lapanganId as ObjectId
+      // ✅ CRITICAL: Validate all parameters
       if (!mongoose.Types.ObjectId.isValid(lapanganId)) {
         throw new Error(`Invalid lapanganId format: ${lapanganId}`);
       }
 
-      // ✅ CRITICAL: Validate excludeBookingId if provided
-      if (excludeBookingId && !mongoose.Types.ObjectId.isValid(excludeBookingId)) {
-        throw new Error(`Invalid excludeBookingId format: ${excludeBookingId}`);
-      }
-
-      // ✅ VALIDATE: durasi parameter
       if (!durasi || isNaN(parseInt(durasi))) {
+        console.log('❌ Invalid durasi:', durasi);
         throw new Error('Durasi harus berupa angka yang valid');
       }
 
@@ -90,9 +86,9 @@ export class BookingService {
       const newBookingStartHour = parseInt(jamBooking.split(':')[0]);
       const newBookingEndHour = newBookingStartHour + parseInt(durasi);
       
-      console.log(`🔍 Checking availability for ${jamBooking} (${newBookingStartHour}:00 - ${newBookingEndHour}:00)`);
+      console.log(`🔍 New booking time range: ${newBookingStartHour}:00 - ${newBookingEndHour}:00`);
       
-      // ✅ SAFE: Build filter with proper ObjectId conversion
+      // Build query filter
       const filter = {
         lapangan: new mongoose.Types.ObjectId(lapanganId),
         tanggal_booking: new Date(tanggalBooking),
@@ -103,32 +99,53 @@ export class BookingService {
         filter._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
       }
 
-      console.log('📊 Query filter:', filter);
+      console.log('📊 Query filter:', JSON.stringify(filter, null, 2));
       
       const existingBookings = await Booking.find(filter);
-      console.log(`📊 Found ${existingBookings.length} existing bookings`);
+      console.log(`📊 Found ${existingBookings.length} existing bookings for this field and date`);
+      
+      // ✅ DEBUG: Log all existing bookings
+      existingBookings.forEach((booking, index) => {
+        console.log(`📋 Existing booking ${index + 1}:`, {
+          id: booking._id,
+          jam_booking: booking.jam_booking,
+          durasi: booking.durasi,
+          status: booking.status_pemesanan
+        });
+      });
       
       // ✅ Check for time overlap with each existing booking
-      for (const booking of existingBookings) {
+      for (let i = 0; i < existingBookings.length; i++) {
+        const booking = existingBookings[i];
         const existingStartHour = parseInt(booking.jam_booking.split(':')[0]);
         const existingEndHour = existingStartHour + booking.durasi;
         
-        console.log(`⏰ Existing booking: ${booking.jam_booking} (${existingStartHour}:00 - ${existingEndHour}:00)`);
+        console.log(`⏰ Checking overlap with booking ${i + 1}: ${existingStartHour}:00 - ${existingEndHour}:00`);
         
         // ✅ OVERLAP DETECTION LOGIC
         const hasOverlap = (
           (newBookingStartHour < existingEndHour) && (newBookingEndHour > existingStartHour)
         );
         
+        console.log('🧮 Overlap calculation:', {
+          newStart: newBookingStartHour,
+          newEnd: newBookingEndHour,
+          existingStart: existingStartHour,
+          existingEnd: existingEndHour,
+          condition1: newBookingStartHour < existingEndHour,
+          condition2: newBookingEndHour > existingStartHour,
+          hasOverlap: hasOverlap
+        });
+        
         if (hasOverlap) {
-          console.log(`❌ OVERLAP DETECTED!`);
-          console.log(`   New: ${newBookingStartHour}:00 - ${newBookingEndHour}:00`);
-          console.log(`   Existing: ${existingStartHour}:00 - ${existingEndHour}:00`);
+          console.log(`❌ OVERLAP DETECTED with booking ${booking._id}!`);
+          console.log(`   New booking: ${newBookingStartHour}:00 - ${newBookingEndHour}:00`);
+          console.log(`   Existing booking: ${existingStartHour}:00 - ${existingEndHour}:00`);
           return false;
         }
       }
       
-      console.log(`✅ No overlap found - slot available`);
+      console.log(`✅ No overlap found - slot is available`);
       return true;
       
     } catch (error) {
@@ -147,32 +164,37 @@ export class BookingService {
   static async createBooking(bookingData) {
     const { userId, lapanganId, tanggalBooking, jamBooking, durasi } = bookingData;
     
+    console.log('🚀 BookingService.createBooking called with:', {
+      userId: userId,
+      lapanganId: lapanganId,
+      tanggalBooking: tanggalBooking,
+      jamBooking: jamBooking,
+      durasi: durasi
+    });
+    
     // Validate field
     const field = await this.validateFieldForBooking(lapanganId);
     
-    // Validate operating hours (with error handling)
-    try {
-      this.validateOperatingHours(field, jamBooking, durasi);
-    } catch (error) {
-      // Log but don't fail if operating hours not set
-      logger.warn('Operating hours validation skipped:', error.message);
-    }
-    
-    // ✅ FIXED: Check availability with correct parameters
+    // ✅ CRITICAL: Check availability with overlap detection
+    console.log('🔍 About to check slot availability...');
     const isAvailable = await this.checkSlotAvailability(
       lapanganId, 
       tanggalBooking, 
       jamBooking, 
-      durasi,  // ✅ PASS durasi parameter
-      null     // ✅ No excludeBookingId for new booking
+      durasi  // ✅ ENSURE durasi is passed
     );
     
+    console.log('📊 Availability check result:', isAvailable);
+    
     if (!isAvailable) {
+      console.log('❌ Slot not available - throwing error');
       throw new Error('Slot waktu tidak tersedia atau bertabrakan dengan booking lain');
     }
     
     // Calculate price
     const totalHarga = this.calculateBookingPrice(field, durasi);
+    
+    console.log('💰 Creating booking with price:', totalHarga);
     
     // Create booking
     const booking = await Booking.create({
@@ -186,6 +208,8 @@ export class BookingService {
       status_pemesanan: 'pending',
       payment_status: 'no_payment'
     });
+    
+    console.log('✅ Booking created successfully:', booking._id);
     
     return { booking, field };
   }
