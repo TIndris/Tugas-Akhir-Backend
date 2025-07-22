@@ -239,6 +239,192 @@ export class BookingService {
 
     return booking;
   }
+
+  // ✅ NEW: Complete booking creation dengan full validation dan overlap check
+  static async createBookingWithFullValidation(bookingData) {
+    const { userId, lapanganId, tanggalBooking, jamBooking, durasi } = bookingData;
+    
+    // 1. Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(lapanganId)) {
+      throw new Error('Format ID lapangan tidak valid');
+    }
+
+    // 2. Validate durasi
+    const durasiInt = parseInt(durasi);
+    if (isNaN(durasiInt) || durasiInt <= 0 || durasiInt > 8) {
+      throw new Error('Durasi harus berupa angka positif antara 1-8 jam');
+    }
+
+    // 3. Manual overlap check
+    const isAvailable = await this.checkManualOverlap(lapanganId, tanggalBooking, jamBooking, durasiInt);
+    
+    if (!isAvailable.available) {
+      const error = new Error('Slot waktu tidak tersedia atau bertabrakan dengan booking lain');
+      error.conflictDetails = isAvailable.conflictDetails;
+      error.errorCode = 'SLOT_CONFLICT';
+      throw error;
+    }
+
+    // 4. Create booking via existing service
+    const result = await this.createBooking({
+      userId,
+      lapanganId,
+      tanggalBooking,
+      jamBooking,
+      durasi: durasiInt
+    });
+
+    return result.booking;
+  }
+
+  // ✅ NEW: Manual overlap check dengan detailed conflict info
+  static async checkManualOverlap(lapanganId, tanggalBooking, jamBooking, durasi) {
+    try {
+      const newStart = parseInt(jamBooking.split(':')[0]);
+      const newEnd = newStart + durasi;
+      
+      // Normalize date
+      const bookingDate = new Date(tanggalBooking);
+      bookingDate.setUTCHours(0, 0, 0, 0);
+      
+      const existingBookings = await Booking.find({
+        lapangan: new mongoose.Types.ObjectId(lapanganId),
+        tanggal_booking: bookingDate,
+        status_pemesanan: { $in: ['pending', 'confirmed'] }
+      });
+      
+      // Check for overlaps
+      for (const existing of existingBookings) {
+        const existingStart = parseInt(existing.jam_booking.split(':')[0]);
+        const existingEnd = existingStart + existing.durasi;
+        
+        const hasOverlap = (newStart < existingEnd) && (newEnd > existingStart);
+        
+        if (hasOverlap) {
+          return {
+            available: false,
+            conflictDetails: {
+              new_booking: {
+                time_range: `${newStart}:00 - ${newEnd}:00`,
+                date: tanggalBooking
+              },
+              conflicting_booking: {
+                id: existing._id,
+                time_range: `${existingStart}:00 - ${existingEnd}:00`,
+                status: existing.status_pemesanan,
+                customer: existing.pelanggan
+              },
+              total_existing_bookings: existingBookings.length
+            }
+          };
+        }
+      }
+      
+      return { available: true };
+      
+    } catch (error) {
+      logger.error('Error in manual overlap check:', error);
+      throw error;
+    }
+  }
+
+  // ✅ NEW: Get user bookings dengan cache handling
+  static async getUserBookingsWithCache(userId) {
+    try {
+      // Import CacheService
+      const { default: CacheService } = await import('./cacheService.js');
+      
+      // Try cache first
+      const cachedBookings = await CacheService.getBookingsFromCache(userId);
+      if (cachedBookings) {
+        return { bookings: cachedBookings, fromCache: true };
+      }
+
+      // Get from database
+      const bookings = await Booking.find({ pelanggan: userId })
+        .populate('lapangan', 'jenis_lapangan nama')
+        .populate('kasir', 'name');
+
+      // Cache result
+      await CacheService.setBookingsCache(userId, bookings, 180);
+
+      return { bookings, fromCache: false };
+
+    } catch (error) {
+      logger.error('Error getting user bookings with cache:', error);
+      throw error;
+    }
+  }
+
+  // ✅ NEW: Delete booking dengan payment check
+  static async deleteBookingWithPaymentCheck(bookingId, userId) {
+    try {
+      const booking = await Booking.findOne({
+        _id: bookingId,
+        pelanggan: userId
+      }).populate('lapangan');
+
+      if (!booking) {
+        throw new Error('Booking tidak ditemukan');
+      }
+
+      // Validate cancellation
+      await this.validateBookingCancellation(booking);
+
+      // Check for payments
+      let hasPayments = false;
+      try {
+        const { default: Payment } = await import('../models/Payment.js');
+        const payments = await Payment.find({ booking: bookingId });
+        hasPayments = payments.length > 0;
+      } catch (importError) {
+        logger.warn('Payment model import error:', importError.message);
+      }
+
+      // Handle deletion or cancellation
+      if (hasPayments && booking.status_pemesanan !== 'pending') {
+        booking.status_pemesanan = 'cancelled';
+        booking.cancelled_at = new Date();
+        booking.cancellation_reason = 'Dibatalkan oleh customer';
+        await booking.save();
+        return { booking, action: 'cancelled' };
+      } else {
+        await Booking.findByIdAndDelete(bookingId);
+        return { booking, action: 'deleted' };
+      }
+
+    } catch (error) {
+      logger.error('Error deleting booking:', error);
+      throw error;
+    }
+  }
+
+  // ✅ NEW: Update booking dengan full validation
+  static async updateBookingWithValidation(bookingId, userId, updateData) {
+    try {
+      // Validate and get booking
+      const booking = await this.validateBookingUpdate(bookingId, userId, updateData);
+      
+      // Apply updates
+      const { tanggal_booking, jam_booking, durasi, catatan } = updateData;
+      
+      if (tanggal_booking) booking.tanggal_booking = new Date(tanggal_booking);
+      if (jam_booking) booking.jam_booking = jam_booking;
+      if (durasi) {
+        booking.durasi = durasi;
+        booking.harga = this.calculateBookingPrice(booking.lapangan, durasi);
+      }
+      if (catatan !== undefined) booking.catatan = catatan;
+
+      await booking.save();
+      
+      return booking;
+
+    } catch (error) {
+      logger.error('Error updating booking with validation:', error);
+      throw error;
+    }
+  }
 }
 
 export default BookingService;
