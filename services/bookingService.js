@@ -63,30 +63,22 @@ export class BookingService {
   // ✅ Availability check
   static async checkSlotAvailability(lapanganId, tanggalBooking, jamBooking, durasi, excludeBookingId = null) {
     try {
-      console.log('🔍 checkSlotAvailability called with:', {
-        lapanganId: lapanganId,
-        tanggalBooking: tanggalBooking,
-        jamBooking: jamBooking,
-        durasi: durasi,
-        durasiType: typeof durasi,
-        excludeBookingId: excludeBookingId
-      });
-
-      // ✅ CRITICAL: Validate all parameters
+      // Validate parameters
       if (!mongoose.Types.ObjectId.isValid(lapanganId)) {
         throw new Error(`Invalid lapanganId format: ${lapanganId}`);
       }
 
       if (!durasi || isNaN(parseInt(durasi))) {
-        console.log('❌ Invalid durasi:', durasi);
         throw new Error('Durasi harus berupa angka yang valid');
+      }
+
+      if (excludeBookingId && !mongoose.Types.ObjectId.isValid(excludeBookingId)) {
+        throw new Error(`Invalid excludeBookingId format: ${excludeBookingId}`);
       }
 
       // Convert to proper types
       const newBookingStartHour = parseInt(jamBooking.split(':')[0]);
       const newBookingEndHour = newBookingStartHour + parseInt(durasi);
-      
-      console.log(`🔍 New booking time range: ${newBookingStartHour}:00 - ${newBookingEndHour}:00`);
       
       // Build query filter
       const filter = {
@@ -99,57 +91,26 @@ export class BookingService {
         filter._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
       }
 
-      console.log('📊 Query filter:', JSON.stringify(filter, null, 2));
-      
       const existingBookings = await Booking.find(filter);
-      console.log(`📊 Found ${existingBookings.length} existing bookings for this field and date`);
       
-      // ✅ DEBUG: Log all existing bookings
-      existingBookings.forEach((booking, index) => {
-        console.log(`📋 Existing booking ${index + 1}:`, {
-          id: booking._id,
-          jam_booking: booking.jam_booking,
-          durasi: booking.durasi,
-          status: booking.status_pemesanan
-        });
-      });
-      
-      // ✅ Check for time overlap with each existing booking
-      for (let i = 0; i < existingBookings.length; i++) {
-        const booking = existingBookings[i];
+      // Check for time overlap
+      for (const booking of existingBookings) {
         const existingStartHour = parseInt(booking.jam_booking.split(':')[0]);
         const existingEndHour = existingStartHour + booking.durasi;
         
-        console.log(`⏰ Checking overlap with booking ${i + 1}: ${existingStartHour}:00 - ${existingEndHour}:00`);
-        
-        // ✅ OVERLAP DETECTION LOGIC
+        // Overlap detection logic
         const hasOverlap = (
           (newBookingStartHour < existingEndHour) && (newBookingEndHour > existingStartHour)
         );
         
-        console.log('🧮 Overlap calculation:', {
-          newStart: newBookingStartHour,
-          newEnd: newBookingEndHour,
-          existingStart: existingStartHour,
-          existingEnd: existingEndHour,
-          condition1: newBookingStartHour < existingEndHour,
-          condition2: newBookingEndHour > existingStartHour,
-          hasOverlap: hasOverlap
-        });
-        
         if (hasOverlap) {
-          console.log(`❌ OVERLAP DETECTED with booking ${booking._id}!`);
-          console.log(`   New booking: ${newBookingStartHour}:00 - ${newBookingEndHour}:00`);
-          console.log(`   Existing booking: ${existingStartHour}:00 - ${existingEndHour}:00`);
           return false;
         }
       }
       
-      console.log(`✅ No overlap found - slot is available`);
       return true;
       
     } catch (error) {
-      console.error('❌ checkSlotAvailability error:', error);
       logger.error('Error checking slot availability:', error);
       throw error;
     }
@@ -164,37 +125,23 @@ export class BookingService {
   static async createBooking(bookingData) {
     const { userId, lapanganId, tanggalBooking, jamBooking, durasi } = bookingData;
     
-    console.log('🚀 BookingService.createBooking called with:', {
-      userId: userId,
-      lapanganId: lapanganId,
-      tanggalBooking: tanggalBooking,
-      jamBooking: jamBooking,
-      durasi: durasi
-    });
-    
     // Validate field
     const field = await this.validateFieldForBooking(lapanganId);
     
-    // ✅ CRITICAL: Check availability with overlap detection
-    console.log('🔍 About to check slot availability...');
+    // Check slot availability with proper overlap detection
     const isAvailable = await this.checkSlotAvailability(
       lapanganId, 
       tanggalBooking, 
       jamBooking, 
-      durasi  // ✅ ENSURE durasi is passed
+      durasi
     );
     
-    console.log('📊 Availability check result:', isAvailable);
-    
     if (!isAvailable) {
-      console.log('❌ Slot not available - throwing error');
       throw new Error('Slot waktu tidak tersedia atau bertabrakan dengan booking lain');
     }
     
     // Calculate price
     const totalHarga = this.calculateBookingPrice(field, durasi);
-    
-    console.log('💰 Creating booking with price:', totalHarga);
     
     // Create booking
     const booking = await Booking.create({
@@ -208,8 +155,6 @@ export class BookingService {
       status_pemesanan: 'pending',
       payment_status: 'no_payment'
     });
-    
-    console.log('✅ Booking created successfully:', booking._id);
     
     return { booking, field };
   }

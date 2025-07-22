@@ -17,13 +17,54 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // ✅ FIXED: Pass durasi to createBooking
+    // ✅ FIXED: Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(lapangan_id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Format ID lapangan tidak valid',
+        error_code: 'INVALID_FIELD_ID'
+      });
+    }
+
+    // ✅ FIXED: Manual overlap check BEFORE service call
+    const newStart = parseInt(jam_booking.split(':')[0]);
+    const newEnd = newStart + parseInt(durasi);
+    
+    const existingBookings = await Booking.find({
+      lapangan: lapangan_id,
+      tanggal_booking: new Date(tanggal_booking),
+      status_pemesanan: { $in: ['pending', 'confirmed'] }
+    });
+    
+    for (const existing of existingBookings) {
+      const existingStart = parseInt(existing.jam_booking.split(':')[0]);
+      const existingEnd = existingStart + existing.durasi;
+      
+      const hasOverlap = (newStart < existingEnd) && (newEnd > existingStart);
+      
+      if (hasOverlap) {
+        return res.status(409).json({
+          status: 'error',
+          message: 'Slot waktu tidak tersedia atau bertabrakan dengan booking lain',
+          error_code: 'SLOT_CONFLICT',
+          conflicting_booking: {
+            time_range: `${existingStart}:00 - ${existingEnd}:00`,
+            status: existing.status_pemesanan
+          },
+          requested_booking: {
+            time_range: `${newStart}:00 - ${newEnd}:00`
+          }
+        });
+      }
+    }
+
+    // ✅ If no overlap, proceed with service call
     const { booking, field } = await BookingService.createBooking({
       userId: req.user._id,
       lapanganId: lapangan_id,
       tanggalBooking: tanggal_booking,
       jamBooking: jam_booking,
-      durasi  // ✅ PASS durasi parameter
+      durasi
     });
 
     const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;
@@ -31,10 +72,9 @@ export const createBooking = async (req, res) => {
       if (client && client.isOpen) {
         await client.del(availabilityCacheKey);
         await client.del(`bookings:${req.user._id}`);
-        logger.info('Availability cache cleared after booking');
       }
     } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
+      // Silent fail for cache
     }
 
     logger.info(`Booking created: ${booking._id}`, {
@@ -53,6 +93,14 @@ export const createBooking = async (req, res) => {
       user: req.user._id,
       stack: error.stack
     });
+    
+    if (error.message.includes('Cast to ObjectId failed')) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID lapangan tidak valid',
+        error_code: 'INVALID_OBJECT_ID'
+      });
+    }
     
     res.status(400).json({
       status: 'error',
