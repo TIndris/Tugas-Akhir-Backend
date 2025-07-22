@@ -18,12 +18,13 @@ export const createBooking = async (req, res) => {
       });
     }
 
+    // ✅ FIXED: Pass durasi to createBooking
     const { booking, field } = await BookingService.createBooking({
       userId: req.user._id,
       lapanganId: lapangan_id,
       tanggalBooking: tanggal_booking,
       jamBooking: jam_booking,
-      durasi
+      durasi  // ✅ PASS durasi parameter
     });
 
     const availabilityCacheKey = `availability:${lapangan_id}:${tanggal_booking}`;

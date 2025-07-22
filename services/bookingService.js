@@ -97,10 +97,16 @@ export class BookingService {
       logger.warn('Operating hours validation skipped:', error.message);
     }
     
-    // Check availability
-    const isAvailable = await this.checkSlotAvailability(lapanganId, tanggalBooking, jamBooking);
+    // ✅ FIXED: Check availability with durasi parameter
+    const isAvailable = await this.checkSlotAvailability(
+      lapanganId, 
+      tanggalBooking, 
+      jamBooking, 
+      durasi  // ✅ ADD: Pass durasi to check overlaps
+    );
+    
     if (!isAvailable) {
-      throw new Error('Slot waktu tidak tersedia');
+      throw new Error('Slot waktu tidak tersedia atau bertabrakan dengan booking lain');
     }
     
     // Calculate price
@@ -139,6 +145,27 @@ export class BookingService {
 
     if (booking.status_pemesanan !== 'pending') {
       throw new Error('Booking yang sudah dikonfirmasi tidak dapat diubah');
+    }
+
+    // If updating time-related fields, check for conflicts
+    if (updateData.tanggal_booking || updateData.jam_booking || updateData.durasi) {
+      const lapanganId = booking.lapangan;
+      const tanggal = updateData.tanggal_booking || booking.tanggal_booking;
+      const jam = updateData.jam_booking || booking.jam_booking;
+      const durasi = updateData.durasi || booking.durasi;
+      
+      // ✅ FIXED: Check availability excluding current booking
+      const isAvailable = await this.checkSlotAvailability(
+        lapanganId, 
+        tanggal, 
+        jam, 
+        durasi,
+        bookingId  // Exclude current booking from conflict check
+      );
+      
+      if (!isAvailable) {
+        throw new Error('Waktu booking yang baru bertabrakan dengan booking lain');
+      }
     }
 
     return booking;
