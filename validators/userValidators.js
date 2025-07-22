@@ -6,12 +6,13 @@ export const validateEmail = (email) => {
 
 // Password validation
 export const validatePassword = (password) => {
-  // At least 8 characters, contains number and letter
-  const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*#?&]{8,}$/;
+  // At least 8 characters, contains at least one letter and one number
+  // Allows any characters (letters, numbers, symbols, spaces)
+  const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
   return passwordRegex.test(password);
 };
 
-// Strong password validation (optional)
+// Strong password validation (optional for admin/cashier)
 export const validateStrongPassword = (password) => {
   // At least 8 characters, uppercase, lowercase, number, special char
   const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
@@ -35,7 +36,7 @@ export const validatePhoneNumber = (phone) => {
 // Role validation
 export const USER_ROLES = ['customer', 'cashier', 'admin'];
 
-export const validateRole = (role) => {  // ← RENAMED dari validateUserRole
+export const validateRole = (role) => {
   return USER_ROLES.includes(role);
 };
 
@@ -55,7 +56,7 @@ export const validatePictureUrl = (url) => {
 export const validateAge = (birthDate) => {
   const today = new Date();
   const birth = new Date(birthDate);
-  const age = today.getFullYear() - birth.getFullYear();
+  let age = today.getFullYear() - birth.getFullYear();
   const monthDiff = today.getMonth() - birth.getMonth();
   
   if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
@@ -95,8 +96,8 @@ export const validateUserPassword = function(next) {
   next();
 };
 
-export const validateUserRoleField = function(next) {  // ← RENAMED dari validateUserRole
-  if (!validateRole(this.role)) {  // ← Updated to use validateRole
+export const validateUserRoleField = function(next) {
+  if (!validateRole(this.role)) {
     return next(new Error('Role user tidak valid'));
   }
   next();
@@ -119,34 +120,6 @@ export const validateAdminCashierCreation = function(next) {
   next();
 };
 
-// Email domain validation (optional, for company emails)
-export const validateEmailDomain = (email, allowedDomains = []) => {
-  if (allowedDomains.length === 0) return true;
-  
-  const domain = email.split('@')[1];
-  return allowedDomains.includes(domain);
-};
-
-// Check if user can be deleted
-export const validateUserDeletion = async function(userId) {
-  // Check if user has active bookings
-  const mongoose = await import('mongoose');
-  const Booking = mongoose.default.model('Booking');
-  const activeBookings = await Booking.countDocuments({
-    pelanggan: userId,
-    status_pemesanan: { $in: ['pending', 'confirmed'] }
-  });
-  
-  return activeBookings === 0;
-};
-
-// Username validation (if needed)
-export const validateUsername = (username) => {
-  // 3-20 characters, alphanumeric and underscore only
-  const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
-  return usernameRegex.test(username);
-};
-
 // Profile completeness validation
 export const validateProfileCompleteness = (user) => {
   const requiredFields = ['name', 'email'];
@@ -167,4 +140,32 @@ export const validateProfileCompleteness = (user) => {
   };
   
   return completeness;
+};
+
+// Username validation (if needed)
+export const validateUsername = (username) => {
+  // 3-20 characters, alphanumeric and underscore only
+  const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+  return usernameRegex.test(username);
+};
+
+// Email domain validation (optional, for company emails)
+export const validateEmailDomain = (email, allowedDomains = []) => {
+  if (allowedDomains.length === 0) return true;
+  
+  const domain = email.split('@')[1];
+  return allowedDomains.includes(domain);
+};
+
+// Check if user can be deleted
+export const validateUserDeletion = async function(userId) {
+  // Check if user has active bookings
+  const mongoose = await import('mongoose');
+  const Booking = mongoose.default.model('Booking');
+  const activeBookings = await Booking.countDocuments({
+    pelanggan: userId,
+    status_pemesanan: { $in: ['pending', 'confirmed'] }
+  });
+  
+  return activeBookings === 0;
 };
