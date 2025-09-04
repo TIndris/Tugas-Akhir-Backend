@@ -1,48 +1,72 @@
-import { isTokenBlacklisted } from '../utils/tokenManager.js';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { isTokenBlacklisted } from '../utils/tokenManager.js';
+import { checkLogoutTimestamp } from '../controllers/authController.js';
 
 export const authenticateToken = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
-    const cookieToken = req.cookies ? req.cookies.jwt : null;
-    
-    if (!token && !cookieToken) {
+    let token;
+
+    // Get token from Authorization header
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+    // Get token from cookie (for Google OAuth)
+    else if (req.cookies.jwt) {
+      token = req.cookies.jwt;
+    }
+
+    if (!token) {
       return res.status(401).json({
         status: 'error',
-        message: 'Please login first'
+        message: 'You are not logged in! Please log in to get access.'
+      });
+    }
+
+    // Check if token is blacklisted
+    if (isTokenBlacklisted(token)) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Token has been invalidated. Please log in again.'
       });
     }
 
     // Verify token
-    const actualToken = token || cookieToken;
-    const decoded = jwt.verify(actualToken, process.env.SESSION_SECRET);
-    
-    // Check if token is blacklisted
-    if (isTokenBlacklisted(actualToken)) {
+    const decoded = jwt.verify(token, process.env.SESSION_SECRET);
+
+    // Check logout timestamp for "logout all sessions"
+    if (checkLogoutTimestamp(decoded.id, decoded.iat * 1000)) {
       return res.status(401).json({
         status: 'error',
-        message: 'Token is no longer valid, please login again'
+        message: 'Session has been terminated. Please log in again.'
       });
     }
 
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      return res.status(404).json({
+    // Get user
+    const currentUser = await User.findById(decoded.id);
+    if (!currentUser) {
+      return res.status(401).json({
         status: 'error',
-        message: 'User not found'
+        message: 'The user belonging to this token does no longer exist.'
       });
     }
 
-    req.user = user;
-    req.token = actualToken;
+    // Attach user and token to request
+    req.user = currentUser;
+    req.token = token;
+    
     next();
   } catch (error) {
-    console.error('JWT error:', error);
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Your token has expired! Please log in again.'
+      });
+    }
+    
     return res.status(401).json({
       status: 'error',
-      message: 'Invalid token'
+      message: 'Invalid token. Please log in again!'
     });
   }
 };
@@ -60,7 +84,7 @@ export const restrictTo = (...roles) => {
   };
 };
 
-// ADD: Middleware for cashier operations
+// Middleware for cashier operations
 export const requireCashierOrAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({

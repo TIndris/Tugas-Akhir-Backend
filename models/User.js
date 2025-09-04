@@ -5,7 +5,7 @@ import {
   validateUserEmail,
   validateUserName,
   validateUserPassword,
-  validateUserRoleField,  // ← UPDATED nama import
+  validateUserRoleField,
   validateAdminCashierCreation,
   validateEmail,
   validatePictureUrl,
@@ -47,7 +47,10 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    select: false
+    select: false,
+    required: function() {
+      return !this.googleId; // Password tidak required jika ada googleId
+    }
   },
   role: {
     type: String,
@@ -71,6 +74,14 @@ const userSchema = new mongoose.Schema({
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  authProvider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local'
+  },
+  lastLogin: {
+    type: Date
   }
 }, { 
   timestamps: true,
@@ -97,24 +108,57 @@ userSchema.pre('save', function(next) {
 
 // Hash password before saving
 userSchema.pre('save', async function(next) {
+  // Skip jika password tidak dimodifikasi
   if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 12);
+  
+  // Skip jika Google user tanpa password
+  if (this.googleId && !this.password) return next();
+  
+  // Hash password jika ada
+  if (this.password) {
+    this.password = await bcrypt.hash(this.password, 12);
+  }
+  
   next();
 });
 
 // Method to check password
 userSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    throw new Error('User does not have a password');
+  }
   return await bcrypt.compare(candidatePassword, this.password);
+};
+
+// Helper methods untuk Google OAuth
+userSchema.methods.isGoogleUser = function() {
+  return !!this.googleId;
+};
+
+userSchema.methods.canLoginWithPassword = function() {
+  return !!this.password;
 };
 
 // Pre-save validations
 userSchema.pre('save', validateUserEmail);
 userSchema.pre('save', validateUserName);
-userSchema.pre('save', validateUserPassword);
-userSchema.pre('save', validateUserRoleField);  // ← UPDATED nama function
+
+// Password validation - skip untuk Google users
+userSchema.pre('save', function(next) {
+  // Skip password validation untuk Google users
+  if (this.googleId && !this.password) {
+    return next();
+  }
+  // Jalankan validasi password normal
+  return validateUserPassword.call(this, next);
+});
+
+userSchema.pre('save', validateUserRoleField);
 userSchema.pre('save', validateAdminCashierCreation);
 
 // Index untuk performance
 userSchema.index({ role: 1 });
+userSchema.index({ googleId: 1 });
+userSchema.index({ authProvider: 1 });
 
 export default mongoose.model('User', userSchema);

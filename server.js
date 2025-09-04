@@ -5,7 +5,9 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import moment from 'moment-timezone';
-import multer from 'multer';  // ✅ ADD multer import
+import multer from 'multer';
+import session from 'express-session';
+import passport from './config/passport.js';
 
 // Import configurations
 import connectDB from './config/db.js';
@@ -36,7 +38,6 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limiting untuk Vercel production
     return process.env.NODE_ENV === 'production';
   }
 });
@@ -48,9 +49,9 @@ app.use(helmet({
 }));
 app.use(mongoSanitize());
 
-// ✅ UPDATED CORS - Public API (allow all origins)
+// ✅ EXISTING CORS (sudah cocok)
 app.use(cors({
-  origin: true,  // Allow any origin/domain
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
@@ -65,10 +66,25 @@ app.use(cors({
   exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
 
-// Handle preflight requests
 app.options('*', cors());
 
-// ✅ KEEP: Enhanced body parsing
+// ✅ Session configuration untuk Passport
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// ✅ Passport middleware
+app.use(passport.initialize());
+app.use(passport.session());
+
+// ✅ EXISTING: Body parsing
 app.use(express.json({ 
   limit: '50mb',
   strict: false 
@@ -80,7 +96,7 @@ app.use(express.urlencoded({
   parameterLimit: 50000
 }));
 
-// ✅ ADD: Payment debugging middleware (PINDAH KE SINI)
+// ✅ EXISTING: Payment debugging middleware
 app.use((req, res, next) => {
   if (req.path.includes('/payments') && req.method === 'POST') {
     console.log('🔍 Payment request debug:', {
@@ -97,9 +113,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ KEEP: Enhanced error handling
+// ✅ EXISTING: Error handling
 app.use((error, req, res, next) => {
-  // Handle JSON syntax errors
   if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
     logger.error('Bad JSON syntax:', error);
     return res.status(400).json({
@@ -112,7 +127,7 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
-// Logging middleware (simplified for production)
+// Logging middleware
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     const start = Date.now();
@@ -124,7 +139,7 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// Health check
+// ✅ UPDATE: Health check dengan Google OAuth info
 app.get('/', (req, res) => {
   const now = moment().tz('Asia/Jakarta');
   
@@ -147,23 +162,33 @@ app.get('/', (req, res) => {
     },
     api: {
       endpoints: [
-        '/auth - Authentication routes',
+        '/auth - Authentication routes (including Google OAuth)',
         '/admin - Admin management routes', 
         '/fields - Field management routes',
         '/bookings - Booking management routes',
         '/payments - Payment management routes (includes booking confirmation)'
       ],
-      kasir_workflow: [
-        'GET /payments/pending - View pending payments',
-        'PATCH /payments/:id/approve - Approve payment & auto-confirm booking',
-        'PATCH /payments/:id/reject - Reject payment & reset booking'
+      auth_methods: [
+        'POST /auth/register - Regular registration',
+        'POST /auth/login - Email/password login',
+        'GET /auth/google - Google OAuth initiate',
+        'GET /auth/google/callback - Google OAuth callback',
+        'POST /auth/set-password - Set password for Google users'
       ],
+      google_oauth: {
+        enabled: true,
+        callback_url: process.env.NODE_ENV === 'production' 
+          ? `${process.env.BACKEND_URL}/auth/google/callback`
+          : 'http://localhost:5000/auth/google/callback',
+        frontend_callback: `${process.env.CLIENT_URL}/auth/callback`
+      },
       features: [
         '✅ Public API - Accessible from any origin',
-        '✅ Form Data Support - File uploads enabled',
-        '✅ JSON & URL-encoded support',
-        '✅ Multi-role authentication',
-        '✅ Rate limiting & security middleware'
+        '✅ Google OAuth integration',
+        '✅ JWT authentication for all users',
+        '✅ Multi-role support (customer/kasir/admin)',
+        '✅ Redis caching & session management',
+        '✅ Form Data Support - File uploads enabled'
       ]
     }
   });
@@ -172,7 +197,7 @@ app.get('/', (req, res) => {
 // Handle favicon requests silently
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// API Routes
+// ✅ API Routes (tetap sama)
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
@@ -190,7 +215,6 @@ app.use((req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  // Silent error logging untuk production
   if (process.env.NODE_ENV !== 'production') {
     logger.error(err.stack);
   }
@@ -204,24 +228,19 @@ app.use((err, req, res, next) => {
 // Database initialization
 const initializeApp = async () => {
   try {
-    // Connect to MongoDB
     await connectDB();
     
-    // Connect to Redis (optional, silent fail)
     try {
       await connectRedis();
     } catch (redisError) {
-      // Silent Redis failure
       if (process.env.NODE_ENV !== 'production') {
         logger.warn('Redis connection failed, continuing without cache');
       }
     }
     
-    // Initialize admin user (silent fail)
     try {
       await initAdmin();
     } catch (adminError) {
-      // Silent admin init failure
       if (process.env.NODE_ENV !== 'production') {
         logger.warn('Admin initialization warning:', adminError.message);
       }
@@ -233,8 +252,6 @@ const initializeApp = async () => {
   }
 };
 
-// Initialize app
 initializeApp();
 
-// Export for Vercel
 export default app;

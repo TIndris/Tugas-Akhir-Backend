@@ -1,8 +1,16 @@
 import express from 'express';
 import passport from 'passport';
 import jwt from 'jsonwebtoken';
-import { logout, login, register, logoutAllSessions } from '../controllers/authController.js';
-import { getProfile, updateProfile } from '../controllers/profileController.js'; // ✅ NEW IMPORT
+import { 
+  logout, 
+  login, 
+  register, 
+  logoutAllSessions,
+  googleCallbackHandler,
+  setPassword,
+  getAuthInfo
+} from '../controllers/authController.js';
+import { getProfile, updateProfile } from '../controllers/profileController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { loginLimiter } from '../middleware/adminAuth.js';
 
@@ -23,33 +31,20 @@ router.get('/google',
 );
 
 router.get('/google/callback',
-  passport.authenticate('google', { failureRedirect: '/login' }),
-  (req, res) => {
-    try {
-      const token = jwt.sign(
-        { id: req.user._id },
-        process.env.SESSION_SECRET,
-        { expiresIn: '24h' }
-      );
-
-      res.cookie('jwt', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000
-      });
-
-      res.redirect(`${process.env.CLIENT_URL}/dashboard`);
-    } catch (error) {
-      console.error('Callback Error:', error);
-      res.redirect('/login?error=authentication_failed');
-    }
-  }
+  passport.authenticate('google', { 
+    failureRedirect: `${process.env.CLIENT_URL}/login?error=oauth_failed`,
+    session: false
+  }),
+  googleCallbackHandler
 );
 
-// ✅ NEW: Profile routes
+// Profile routes
 router.get('/profile', authenticateToken, getProfile);
 router.patch('/profile', authenticateToken, updateProfile);
+
+// Google user specific routes
+router.post('/set-password', authenticateToken, setPassword);
+router.get('/auth-info', authenticateToken, getAuthInfo);
 
 // Existing protected routes
 router.get('/status', authenticateToken, (req, res) => {
@@ -59,7 +54,10 @@ router.get('/status', authenticateToken, (req, res) => {
       id: req.user._id,
       name: req.user.name,
       email: req.user.email,
-      picture: req.user.picture
+      picture: req.user.picture,
+      authProvider: req.user.authProvider,
+      isEmailVerified: req.user.isEmailVerified,
+      role: req.user.role
     }
   });
 });
