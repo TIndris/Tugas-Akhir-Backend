@@ -178,7 +178,7 @@ export const getBookingById = async (req, res) => {
 
     const booking = await Booking.findById(id)
       .populate('user_id', 'name email phone')
-      .populate('lapangan_id', 'nama_lapangan harga_per_jam gambar_lapangan');
+      .populate('lapangan_id', 'nama harga gambar');
 
     if (!booking) {
       return res.status(404).json({
@@ -187,7 +187,6 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Authorization check
     const isOwner = booking.user_id._id.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
@@ -202,12 +201,31 @@ export const getBookingById = async (req, res) => {
       status: 'success',
       message: 'Detail booking berhasil diambil',
       data: {
-        booking: booking.toJSON()
+        booking: {
+          id: booking._id,
+          user_id: booking.user_id,
+          lapangan_id: booking.lapangan_id,
+          tanggal_booking: booking.tanggal_booking,
+          jam_booking: booking.jam_booking,
+          durasi: booking.durasi,
+          total_harga: booking.total_harga,
+          status: booking.status,
+          payment_status: booking.payment_status,
+          catatan: booking.catatan,
+          createdAt: booking.createdAt,
+          updatedAt: booking.updatedAt
+        }
       }
     });
 
   } catch (error) {
-    logger.error('Get booking by ID error:', error);
+    logger.error('Get booking by ID error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id?.toString(),
+      userRole: req.user?.role
+    });
+
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat mengambil detail booking'
