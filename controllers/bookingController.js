@@ -185,41 +185,19 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Fix: Gunakan field yang benar berdasarkan schema
     const bookingUserId = booking.pelanggan;
-    const bookingKasirId = booking.kasir; // Add kasir field check
     
     if (!bookingUserId) {
-      logger.error('Booking pelanggan field not found', {
-        bookingId: id,
-        bookingFields: Object.keys(booking.toObject()),
-        schema: 'PELANGGAN_FIELD_MISSING'
-      });
       return res.status(500).json({
         status: 'error',
         message: 'Data booking tidak valid'
       });
     }
 
-    // Enhanced Authorization check
+    // FIXED: Kasir dan Admin bisa akses SEMUA booking
     const isOwner = bookingUserId.toString() === userId.toString();
-    const isAssignedKasir = bookingKasirId && bookingKasirId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
-
-    // Allow access if: owner, assigned kasir, or any kasir/admin
-    const hasAccess = isOwner || isAssignedKasir || isCashierOrAdmin;
-
-    logger.info('Booking access check', {
-      bookingId: id,
-      userId: userId.toString(),
-      userRole,
-      bookingUserId: bookingUserId.toString(),
-      bookingKasirId: bookingKasirId?.toString() || 'none',
-      isOwner,
-      isAssignedKasir,
-      isCashierOrAdmin,
-      hasAccess
-    });
+    const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
       return res.status(403).json({
@@ -229,68 +207,97 @@ export const getBookingById = async (req, res) => {
     }
 
     // Manual populate dengan field yang benar
-    let populatedBooking = booking.toObject();
+    let populatedBooking = {};
     
     try {
-      // Populate pelanggan (user)
+      // Populate pelanggan (user) - DATA PENTING SAJA
       const User = mongoose.model('User');
       const user = await User.findById(bookingUserId).select('name email phone');
-      if (user) {
-        populatedBooking.pelanggan_detail = user;
-      }
-
-      // Populate kasir jika ada
-      if (bookingKasirId) {
-        const kasir = await User.findById(bookingKasirId).select('name email');
-        if (kasir) {
-          populatedBooking.kasir_detail = kasir;
-        }
-      }
-
-      // Populate lapangan (field)
+      
+      // Populate lapangan (field) - DATA PENTING SAJA
       const Field = mongoose.model('Field');
-      const fieldId = booking.lapangan;
-      if (fieldId) {
-        const field = await Field.findById(fieldId).select('nama harga gambar');
-        if (field) {
-          populatedBooking.lapangan_detail = field;
-        }
+      const field = await Field.findById(booking.lapangan).select('nama harga');
+      
+      // Populate kasir jika ada - DATA PENTING SAJA
+      let kasir = null;
+      if (booking.kasir) {
+        kasir = await User.findById(booking.kasir).select('name email');
       }
+
+      // RESPONSE SEDERHANA - HANYA DATA PENTING
+      populatedBooking = {
+        id: booking._id,
+        customer: {
+          name: user?.name || 'Unknown',
+          email: user?.email || 'Unknown',
+          phone: user?.phone || 'Unknown'
+        },
+        field: {
+          name: field?.nama || 'Unknown',
+          price: field?.harga || 0
+        },
+        kasir: kasir ? {
+          name: kasir.name,
+          email: kasir.email
+        } : null,
+        booking_details: {
+          date: booking.tanggal_booking,
+          time: booking.jam_booking,
+          duration: booking.durasi,
+          total_price: booking.harga
+        },
+        status: {
+          booking: booking.status_pemesanan,
+          payment: booking.payment_status
+        },
+        timestamps: {
+          created: booking.createdAt,
+          updated: booking.updatedAt,
+          confirmed: booking.konfirmasi_at
+        }
+      };
+
     } catch (populateError) {
-      logger.warn('Manual populate failed, returning raw booking', {
+      logger.warn('Manual populate failed', {
         error: populateError.message,
         bookingId: id
       });
+      
+      // Fallback response jika populate gagal
+      populatedBooking = {
+        id: booking._id,
+        customer: { name: 'Data not available' },
+        field: { name: 'Data not available' },
+        kasir: null,
+        booking_details: {
+          date: booking.tanggal_booking,
+          time: booking.jam_booking,
+          duration: booking.durasi,
+          total_price: booking.harga
+        },
+        status: {
+          booking: booking.status_pemesanan,
+          payment: booking.payment_status
+        },
+        timestamps: {
+          created: booking.createdAt,
+          updated: booking.updatedAt,
+          confirmed: booking.konfirmasi_at
+        }
+      };
     }
 
     res.status(200).json({
       status: 'success',
       message: 'Detail booking berhasil diambil',
       data: {
-        booking: {
-          id: booking._id,
-          pelanggan: populatedBooking.pelanggan_detail || booking.pelanggan,
-          kasir: populatedBooking.kasir_detail || booking.kasir,
-          lapangan: populatedBooking.lapangan_detail || booking.lapangan,
-          jenis_lapangan: booking.jenis_lapangan,
-          tanggal_booking: booking.tanggal_booking,
-          jam_booking: booking.jam_booking,
-          durasi: booking.durasi,
-          harga: booking.harga,
-          status_pemesanan: booking.status_pemesanan,
-          payment_status: booking.payment_status,
-          payment_deadline: booking.payment_deadline,
-          konfirmasi_at: booking.konfirmasi_at,
-          createdAt: booking.createdAt,
-          updatedAt: booking.updatedAt
-        }
+        booking: populatedBooking
       }
     });
 
   } catch (error) {
     logger.error('Get booking by ID error:', {
       error: error.message,
-      stack: error.stack,
       bookingId: req.params.id,
       userId: req.user?._id?.toString(),
       userRole: req.user?.role
@@ -327,15 +334,14 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    // Enhanced authorization check
+    // FIXED: Consistent authorization logic
     const bookingUserId = booking.pelanggan;
-    const bookingKasirId = booking.kasir;
     
     const isOwner = bookingUserId.toString() === userId.toString();
-    const isAssignedKasir = bookingKasirId && bookingKasirId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
-    const hasAccess = isOwner || isAssignedKasir || isCashierOrAdmin;
+    // FIXED: Kasir dan Admin bisa akses SEMUA booking
+    const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
       return res.status(403).json({
@@ -356,6 +362,11 @@ export const updateBooking = async (req, res) => {
       updateData = filteredData;
     }
 
+    // Add kasir assignment if kasir is updating and not assigned yet
+    if (userRole === 'kasir' && !booking.kasir) {
+      updateData.kasir = userId;
+    }
+
     const updatedBooking = await Booking.findByIdAndUpdate(
       id,
       { ...updateData, updatedAt: new Date() },
@@ -366,6 +377,7 @@ export const updateBooking = async (req, res) => {
       bookingId: id,
       updatedBy: userId,
       userRole,
+      kasirAssigned: !booking.kasir && userRole === 'kasir',
       action: 'UPDATE_BOOKING'
     });
 
@@ -412,15 +424,14 @@ export const deleteBooking = async (req, res) => {
       });
     }
 
-    // Enhanced authorization check
+    // FIXED: Consistent authorization logic
     const bookingUserId = booking.pelanggan;
-    const bookingKasirId = booking.kasir;
     
     const isOwner = bookingUserId.toString() === userId.toString();
-    const isAssignedKasir = bookingKasirId && bookingKasirId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
-    const hasAccess = isOwner || isAssignedKasir || isCashierOrAdmin;
+    // FIXED: Kasir dan Admin bisa akses SEMUA booking
+    const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
       return res.status(403).json({
