@@ -203,7 +203,9 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    const booking = await Booking.findById(id);
+    const booking = await Booking.findById(id)
+      .populate('userId', 'name email phone')
+      .populate('lapanganId', 'nama harga gambar');
 
     if (!booking) {
       return res.status(404).json({
@@ -212,7 +214,7 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    const isOwner = booking.userId.toString() === userId.toString();
+    const isOwner = booking.userId._id.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
     if (!isOwner && !isCashierOrAdmin) {
@@ -226,7 +228,20 @@ export const getBookingById = async (req, res) => {
       status: 'success',
       message: 'Detail booking berhasil diambil',
       data: {
-        booking
+        booking: {
+          id: booking._id,
+          userId: booking.userId,
+          lapanganId: booking.lapanganId,
+          tanggalBooking: booking.tanggalBooking,
+          jamBooking: booking.jamBooking,
+          durasi: booking.durasi,
+          totalHarga: booking.totalHarga,
+          status: booking.status,
+          paymentStatus: booking.paymentStatus,
+          catatan: booking.catatan,
+          createdAt: booking.createdAt,
+          updatedAt: booking.updatedAt
+        }
       }
     });
 

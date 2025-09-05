@@ -176,9 +176,8 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    const booking = await Booking.findById(id)
-      .populate('userId', 'name email phone')
-      .populate('lapanganId', 'nama harga gambar');
+    // Coba tanpa populate dulu untuk test
+    const booking = await Booking.findById(id);
 
     if (!booking) {
       return res.status(404).json({
@@ -187,7 +186,23 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    const isOwner = booking.userId._id.toString() === userId.toString();
+    // Check field yang benar di booking object
+    const bookingUserId = booking.user_id || booking.userId;
+    
+    if (!bookingUserId) {
+      logger.error('Booking user field not found', {
+        bookingId: id,
+        bookingFields: Object.keys(booking.toObject()),
+        schema: 'USER_FIELD_MISSING'
+      });
+      return res.status(500).json({
+        status: 'error',
+        message: 'Data booking tidak valid'
+      });
+    }
+
+    // Authorization check
+    const isOwner = bookingUserId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
     if (!isOwner && !isCashierOrAdmin) {
@@ -197,30 +212,45 @@ export const getBookingById = async (req, res) => {
       });
     }
 
+    // Manual populate jika diperlukan
+    let populatedBooking = booking.toObject();
+    
+    try {
+      // Populate user
+      const User = mongoose.model('User');
+      const user = await User.findById(bookingUserId).select('name email phone');
+      if (user) {
+        populatedBooking.user = user;
+      }
+
+      // Populate field
+      const Field = mongoose.model('Field');
+      const fieldId = booking.lapangan_id || booking.lapanganId;
+      if (fieldId) {
+        const field = await Field.findById(fieldId).select('nama harga gambar');
+        if (field) {
+          populatedBooking.field = field;
+        }
+      }
+    } catch (populateError) {
+      logger.warn('Manual populate failed, returning raw booking', {
+        error: populateError.message,
+        bookingId: id
+      });
+    }
+
     res.status(200).json({
       status: 'success',
       message: 'Detail booking berhasil diambil',
       data: {
-        booking: {
-          id: booking._id,
-          userId: booking.userId,
-          lapanganId: booking.lapanganId,
-          tanggalBooking: booking.tanggalBooking,
-          jamBooking: booking.jamBooking,
-          durasi: booking.durasi,
-          totalHarga: booking.totalHarga,
-          status: booking.status,
-          paymentStatus: booking.paymentStatus,
-          catatan: booking.catatan,
-          createdAt: booking.createdAt,
-          updatedAt: booking.updatedAt
-        }
+        booking: populatedBooking
       }
     });
 
   } catch (error) {
     logger.error('Get booking by ID error:', {
       error: error.message,
+      stack: error.stack,
       bookingId: req.params.id,
       userId: req.user?._id?.toString(),
       userRole: req.user?.role
@@ -257,8 +287,11 @@ export const updateBooking = async (req, res) => {
       });
     }
 
+    // Fix field reference
+    const bookingUserId = booking.user_id || booking.userId;
+    
     // Authorization check
-    const isOwner = booking.user_id.toString() === userId.toString();
+    const isOwner = bookingUserId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
     if (!isOwner && !isCashierOrAdmin) {
@@ -284,8 +317,7 @@ export const updateBooking = async (req, res) => {
       id,
       { ...updateData, updatedAt: new Date() },
       { new: true, runValidators: true }
-    ).populate('user_id', 'name email phone')
-     .populate('lapangan_id', 'nama_lapangan harga_per_jam');
+    );
 
     logger.info('Booking updated', {
       bookingId: id,
@@ -298,19 +330,22 @@ export const updateBooking = async (req, res) => {
       status: 'success',
       message: 'Booking berhasil diperbarui',
       data: {
-        booking: updatedBooking.toJSON()
+        booking: updatedBooking
       }
     });
 
   } catch (error) {
-    logger.error('Update booking error:', error);
+    logger.error('Update booking error:', {
+      error: error.message,
+      stack: error.stack,
+      bookingId: req.params.id
+    });
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat memperbarui booking'
     });
   }
 };
-
 
 export const deleteBooking = async (req, res) => {
   try {
@@ -334,8 +369,11 @@ export const deleteBooking = async (req, res) => {
       });
     }
 
+    // Fix field reference
+    const bookingUserId = booking.user_id || booking.userId;
+
     // Authorization check
-    const isOwner = booking.user_id.toString() === userId.toString();
+    const isOwner = bookingUserId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
     if (!isOwner && !isCashierOrAdmin) {
@@ -368,7 +406,11 @@ export const deleteBooking = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error('Delete booking error:', error);
+    logger.error('Delete booking error:', {
+      error: error.message,
+      stack: error.stack,
+      bookingId: req.params.id
+    });
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat menghapus booking'
@@ -518,3 +560,47 @@ export const getAllBookings = async (req, res) => {
 
 export const getBookings = getAllBookings;
 export const getCashierBookings = getAllBookingsForCashier;
+
+// Tambahkan di bookingController.js untuk debug schema
+export const debugBookingSchema = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const booking = await Booking.findById(id);
+    
+    if (!booking) {
+      return res.json({
+        status: 'debug',
+        message: 'Booking not found',
+        bookingId: id
+      });
+    }
+
+    const bookingObj = booking.toObject();
+    
+    res.json({
+      status: 'debug',
+      message: 'Booking schema analysis',
+      data: {
+        bookingId: id,
+        availableFields: Object.keys(bookingObj),
+        userField: {
+          user_id: bookingObj.user_id || 'not found',
+          userId: bookingObj.userId || 'not found'
+        },
+        fieldField: {
+          lapangan_id: bookingObj.lapangan_id || 'not found',
+          lapanganId: bookingObj.lapanganId || 'not found'
+        },
+        rawBooking: bookingObj
+      }
+    });
+
+  } catch (error) {
+    res.json({
+      status: 'debug_error',
+      message: error.message,
+      stack: error.stack
+    });
+  }
+};
