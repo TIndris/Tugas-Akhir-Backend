@@ -263,3 +263,155 @@ export const getBookingById = async (req, res) => {
     });
   }
 };
+
+export const getMyBookings = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const showCancelled = req.query.show_cancelled === 'true'; // Optional parameter
+    
+    // Build filter - exclude cancelled bookings by default
+    const filter = { pelanggan: userId };
+    
+    if (!showCancelled) {
+      filter.status_pemesanan = { $ne: 'cancelled' };
+    }
+
+    // Get bookings with filter
+    const bookings = await Booking.find(filter)
+      .populate('lapangan', 'nama jenis_lapangan harga gambar jam_buka jam_tutup status')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Format response
+    const formattedBookings = bookings.map(booking => ({
+      ...booking,
+      lapangan: {
+        ...booking.lapangan,
+        jamOperasional: booking.lapangan?.jam_buka && booking.lapangan?.jam_tutup 
+          ? `${booking.lapangan.jam_buka} - ${booking.lapangan.jam_tutup}`
+          : 'undefined - undefined'
+      }
+    }));
+
+    logger.info('User bookings retrieved', {
+      userId: userId.toString(),
+      totalBookings: formattedBookings.length,
+      showCancelled,
+      action: 'GET_MY_BOOKINGS'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      results: formattedBookings.length,
+      data: { 
+        bookings: formattedBookings 
+      },
+      cached: false,
+      filters: {
+        show_cancelled: showCancelled,
+        total_active: formattedBookings.length
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Get user bookings error: ${error.message}`, {
+      userId: req.user._id,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil data booking'
+    });
+  }
+};
+
+export const getMyBookingHistory = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { status, limit = 50, page = 1 } = req.query;
+    
+    // Build filter
+    const filter = { pelanggan: userId };
+    
+    if (status) {
+      filter.status_pemesanan = status;
+    }
+
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get bookings with filter and pagination
+    const [bookings, totalCount] = await Promise.all([
+      Booking.find(filter)
+        .populate('lapangan', 'nama jenis_lapangan harga gambar jam_buka jam_tutup status')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean(),
+      Booking.countDocuments(filter)
+    ]);
+
+    // Format response
+    const formattedBookings = bookings.map(booking => ({
+      ...booking,
+      lapangan: {
+        ...booking.lapangan,
+        jamOperasional: booking.lapangan?.jam_buka && booking.lapangan?.jam_tutup 
+          ? `${booking.lapangan.jam_buka} - ${booking.lapangan.jam_tutup}`
+          : 'undefined - undefined'
+      }
+    }));
+
+    // Group by status for summary
+    const statusSummary = await Booking.aggregate([
+      { $match: { pelanggan: new mongoose.Types.ObjectId(userId) } },
+      { $group: { _id: '$status_pemesanan', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+
+    logger.info('User booking history retrieved', {
+      userId: userId.toString(),
+      totalBookings: formattedBookings.length,
+      totalCount,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      status: status || 'all',
+      action: 'GET_MY_BOOKING_HISTORY'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      results: formattedBookings.length,
+      data: { 
+        bookings: formattedBookings,
+        pagination: {
+          current_page: parseInt(page),
+          per_page: parseInt(limit),
+          total_items: totalCount,
+          total_pages: Math.ceil(totalCount / parseInt(limit))
+        },
+        summary: {
+          by_status: statusSummary.reduce((acc, item) => {
+            acc[item._id] = item.count;
+            return acc;
+          }, {}),
+          total_all: totalCount
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Get user booking history error: ${error.message}`, {
+      userId: req.user._id,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil riwayat booking'
+    });
+  }
+};
+
+export { getMyBookingHistory };

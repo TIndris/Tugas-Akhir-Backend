@@ -129,13 +129,48 @@ export const getMyBookings = async (req, res) => {
   try {
     const userId = req.user._id;
     
-    const { bookings, fromCache } = await BookingService.getUserBookingsWithCache(userId);
+    // Get all user bookings (cancelled ones are already deleted)
+    const bookings = await Booking.find({ pelanggan: userId })
+      .populate('lapangan', 'nama jenis_lapangan harga gambar jam_buka jam_tutup status')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Format response
+    const formattedBookings = bookings.map(booking => ({
+      ...booking,
+      lapangan: {
+        ...booking.lapangan,
+        jamOperasional: booking.lapangan?.jam_buka && booking.lapangan?.jam_tutup 
+          ? `${booking.lapangan.jam_buka} - ${booking.lapangan.jam_tutup}`
+          : 'undefined - undefined'
+      }
+    }));
+
+    // Group by status for summary
+    const statusSummary = formattedBookings.reduce((acc, booking) => {
+      const status = booking.status_pemesanan;
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
+
+    logger.info('User bookings retrieved', {
+      userId: userId.toString(),
+      totalBookings: formattedBookings.length,
+      statusBreakdown: statusSummary,
+      action: 'GET_MY_BOOKINGS'
+    });
 
     res.status(200).json({
       status: 'success',
-      results: bookings.length,
-      data: { bookings },
-      cached: fromCache
+      results: formattedBookings.length,
+      data: { 
+        bookings: formattedBookings,
+        summary: {
+          total_bookings: formattedBookings.length,
+          by_status: statusSummary
+        }
+      },
+      cached: false
     });
 
   } catch (error) {
@@ -870,23 +905,8 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    // FIXED: Use valid payment_status values from schema
-    const updateData = {
-      status_pemesanan: 'cancelled',
-      payment_status: 'expired', // Use 'expired' instead of 'cancelled'
-      updatedAt: new Date()
-    };
-
-    // Only add fields if they exist in schema
-    if (cancel_reason) {
-      updateData.cancel_reason = cancel_reason;
-    }
-
-    const cancelledBooking = await Booking.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    );
+    // CHANGED: Delete booking from database instead of updating status
+    await Booking.findByIdAndDelete(id);
 
     // Invalidate cache
     try {
@@ -899,7 +919,7 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    logger.info('Booking cancelled', {
+    logger.info('Booking cancelled and deleted', {
       bookingId: id,
       cancelledBy: userId.toString(),
       userRole,
@@ -908,23 +928,21 @@ export const cancelBooking = async (req, res) => {
         booking: booking.status_pemesanan,
         payment: booking.payment_status
       },
-      newStatus: {
-        booking: 'cancelled',
-        payment: 'expired'
-      },
-      action: 'CANCEL_BOOKING'
+      action: 'CANCEL_DELETE_BOOKING'
     });
 
     res.status(200).json({
       status: 'success',
-      message: 'Booking berhasil dibatalkan',
+      message: 'Booking berhasil dibatalkan dan dihapus',
       data: {
-        booking: {
-          id: cancelledBooking._id,
-          status_pemesanan: cancelledBooking.status_pemesanan,
-          payment_status: cancelledBooking.payment_status,
-          cancel_reason: cancelledBooking.cancel_reason || cancel_reason,
-          updatedAt: cancelledBooking.updatedAt
+        deleted_booking: {
+          id: id,
+          cancel_reason: cancel_reason || 'Dibatalkan oleh customer',
+          cancelled_at: new Date(),
+          original_status: {
+            booking: booking.status_pemesanan,
+            payment: booking.payment_status
+          }
         }
       }
     });
