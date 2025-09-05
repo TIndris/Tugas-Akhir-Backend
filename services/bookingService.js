@@ -61,61 +61,44 @@ export class BookingService {
   }
   
   // ✅ Availability check
-  static async checkSlotAvailability(lapanganId, tanggalBooking, jamBooking, durasi, excludeBookingId = null) {
+  static async checkSlotAvailability(lapanganId, tanggalBooking, jamBooking, durasi = 1, excludeBookingId = null) {
     try {
-      // Strict parameter validation
-      if (!mongoose.Types.ObjectId.isValid(lapanganId)) {
-        throw new Error(`Invalid lapanganId: ${lapanganId}`);
-      }
-
-      const durasiInt = parseInt(durasi);
-      if (isNaN(durasiInt) || durasiInt <= 0) {
-        throw new Error(`Invalid durasi: ${durasi}`);
-      }
-
-      if (excludeBookingId && !mongoose.Types.ObjectId.isValid(excludeBookingId)) {
-        throw new Error(`Invalid excludeBookingId: ${excludeBookingId}`);
-      }
-
-      // Time range calculation
-      const newBookingStartHour = parseInt(jamBooking.split(':')[0]);
-      const newBookingEndHour = newBookingStartHour + durasiInt;
+      const bookingDate = new Date(tanggalBooking);
+      const [startHour, startMinute] = jamBooking.split(':').map(Number);
+      const endHour = startHour + durasi;
       
-      // ✅ NORMALIZE: Date consistency
-      const searchDate = new Date(tanggalBooking);
-      searchDate.setUTCHours(0, 0, 0, 0);
-      
-      // Build filter with explicit ObjectId
-      const filter = {
-        lapangan: new mongoose.Types.ObjectId(lapanganId),
-        tanggal_booking: searchDate,
-        status_pemesanan: { $in: ['pending', 'confirmed'] }
+      const query = {
+        lapangan: lapanganId,
+        tanggal_booking: {
+          $gte: new Date(bookingDate.setHours(0, 0, 0, 0)),
+          $lt: new Date(bookingDate.setHours(23, 59, 59, 999))
+        },
+        status_pemesanan: { $nin: ['cancelled', 'expired'] }
       };
       
+      // Exclude current booking from conflict check
       if (excludeBookingId) {
-        filter._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
+        query._id = { $ne: excludeBookingId };
       }
-
-      const existingBookings = await Booking.find(filter);
       
-      // Overlap detection
-      for (const booking of existingBookings) {
-        const existingStartHour = parseInt(booking.jam_booking.split(':')[0]);
-        const existingEndHour = existingStartHour + booking.durasi;
+      const existingBookings = await Booking.find(query);
+      
+      // Check time conflicts
+      for (const existingBooking of existingBookings) {
+        const [existingStartHour] = existingBooking.jam_booking.split(':').map(Number);
+        const existingEndHour = existingStartHour + existingBooking.durasi;
         
-        // ✅ OVERLAP LOGIC: (Start1 < End2) AND (End1 > Start2)
-        const hasOverlap = (newBookingStartHour < existingEndHour) && (newBookingEndHour > existingStartHour);
+        const hasTimeConflict = !(endHour <= existingStartHour || startHour >= existingEndHour);
         
-        if (hasOverlap) {
-          return false; // Overlap detected
+        if (hasTimeConflict) {
+          return false;
         }
       }
       
-      return true; // No overlap
-    
+      return true;
     } catch (error) {
       logger.error('Slot availability check error:', error);
-      throw error;
+      throw new Error('Gagal memeriksa ketersediaan slot');
     }
   }
   

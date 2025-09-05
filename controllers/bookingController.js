@@ -441,10 +441,68 @@ export const updateBookingByCustomer = async (req, res) => {
       });
     }
 
-    // Customer can only update specific fields
-    const allowedFields = ['catatan', 'special_request'];
+    // ENHANCED: Customer can update more fields including schedule
+    const allowedFields = ['catatan', 'special_request', 'tanggal_booking', 'jam_booking', 'durasi'];
     const filteredData = {};
     
+    // Check if rescheduling (changing date, time, or duration)
+    const isRescheduling = updateData.tanggal_booking || updateData.jam_booking || updateData.durasi;
+    
+    if (isRescheduling) {
+      // Validate new schedule if provided
+      const newDate = updateData.tanggal_booking || booking.tanggal_booking;
+      const newTime = updateData.jam_booking || booking.jam_booking;
+      const newDuration = updateData.durasi || booking.durasi;
+      
+      // Check if new slot is available (excluding current booking)
+      try {
+        const isAvailable = await BookingService.checkSlotAvailability(
+          booking.lapangan,
+          newDate,
+          newTime,
+          newDuration,
+          id // Exclude current booking from conflict check
+        );
+        
+        if (!isAvailable) {
+          return res.status(409).json({
+            status: 'error',
+            message: 'Slot waktu yang dipilih sudah tidak tersedia',
+            error_code: 'SLOT_CONFLICT'
+          });
+        }
+      } catch (availabilityError) {
+        logger.error('Availability check error during reschedule:', {
+          error: availabilityError.message,
+          bookingId: id,
+          newSchedule: { newDate, newTime, newDuration }
+        });
+        
+        return res.status(400).json({
+          status: 'error',
+          message: 'Gagal memvalidasi jadwal baru: ' + availabilityError.message
+        });
+      }
+      
+      // Recalculate price if duration changed
+      if (updateData.durasi && updateData.durasi !== booking.durasi) {
+        try {
+          const Field = mongoose.model('Field');
+          const field = await Field.findById(booking.lapangan);
+          
+          if (field) {
+            filteredData.harga = field.harga * updateData.durasi;
+          }
+        } catch (priceError) {
+          logger.warn('Price recalculation failed:', {
+            error: priceError.message,
+            bookingId: id
+          });
+        }
+      }
+    }
+    
+    // Filter allowed fields
     allowedFields.forEach(field => {
       if (updateData[field] !== undefined) {
         filteredData[field] = updateData[field];
@@ -458,28 +516,54 @@ export const updateBookingByCustomer = async (req, res) => {
       });
     }
 
+    // Add metadata
+    filteredData.updatedAt = new Date();
+    if (isRescheduling) {
+      filteredData.rescheduled_at = new Date();
+      filteredData.rescheduled_by = userId;
+    }
+
     const updatedBooking = await Booking.findByIdAndUpdate(
       id,
-      { ...filteredData, updatedAt: new Date() },
+      filteredData,
       { new: true, runValidators: true }
     );
 
+    // Invalidate cache if rescheduling
+    if (isRescheduling) {
+      try {
+        await CacheService.invalidateBookingCache(userId, booking.lapangan, booking.tanggal_booking);
+        await CacheService.invalidateBookingCache(userId, booking.lapangan, filteredData.tanggal_booking || booking.tanggal_booking);
+      } catch (cacheError) {
+        logger.warn('Cache invalidation failed during reschedule', {
+          error: cacheError.message,
+          bookingId: id
+        });
+      }
+    }
+
     logger.info('Booking updated by customer', {
       bookingId: id,
-      updatedBy: userId,
+      updatedBy: userId.toString(),
       updates: filteredData,
+      isRescheduling,
       action: 'CUSTOMER_UPDATE_BOOKING'
     });
 
     res.status(200).json({
       status: 'success',
-      message: 'Booking berhasil diperbarui',
+      message: isRescheduling ? 'Booking berhasil dijadwal ulang' : 'Booking berhasil diperbarui',
       data: {
         booking: {
           id: updatedBooking._id,
+          tanggal_booking: updatedBooking.tanggal_booking,
+          jam_booking: updatedBooking.jam_booking,
+          durasi: updatedBooking.durasi,
+          harga: updatedBooking.harga,
           catatan: updatedBooking.catatan,
           special_request: updatedBooking.special_request,
-          updatedAt: updatedBooking.updatedAt
+          updatedAt: updatedBooking.updatedAt,
+          rescheduled_at: updatedBooking.rescheduled_at
         }
       }
     });
@@ -494,7 +578,8 @@ export const updateBookingByCustomer = async (req, res) => {
 
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat memperbarui booking'
+      message: 'Terjadi kesalahan saat memperbarui booking',
+      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -771,26 +856,37 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    // Update booking status to cancelled
+    // Update booking status to cancelled - FIXED: Remove fields that might not exist in schema
+    const updateData = {
+      status_pemesanan: 'cancelled',
+      payment_status: 'cancelled',
+      updatedAt: new Date()
+    };
+
+    // Only add fields if they exist in schema
+    if (cancel_reason) {
+      updateData.cancel_reason = cancel_reason;
+    }
+
     const cancelledBooking = await Booking.findByIdAndUpdate(
       id,
-      {
-        status_pemesanan: 'cancelled',
-        payment_status: 'cancelled',
-        cancel_reason: cancel_reason || 'Dibatalkan oleh customer',
-        cancelled_at: new Date(),
-        cancelled_by: userId,
-        updatedAt: new Date()
-      },
+      updateData,
       { new: true, runValidators: true }
     );
 
-    // Invalidate cache
-    await CacheService.invalidateBookingCache(bookingUserId, booking.lapangan, booking.tanggal_booking);
+    // Invalidate cache - FIXED: Add try-catch for cache invalidation
+    try {
+      await CacheService.invalidateBookingCache(bookingUserId, booking.lapangan, booking.tanggal_booking);
+    } catch (cacheError) {
+      logger.warn('Cache invalidation failed during booking cancellation', {
+        error: cacheError.message,
+        bookingId: id
+      });
+    }
 
     logger.info('Booking cancelled', {
       bookingId: id,
-      cancelledBy: userId,
+      cancelledBy: userId.toString(),
       userRole,
       reason: cancel_reason || 'No reason provided',
       originalStatus: {
@@ -808,8 +904,8 @@ export const cancelBooking = async (req, res) => {
           id: cancelledBooking._id,
           status_pemesanan: cancelledBooking.status_pemesanan,
           payment_status: cancelledBooking.payment_status,
-          cancel_reason: cancelledBooking.cancel_reason,
-          cancelled_at: cancelledBooking.cancelled_at
+          cancel_reason: cancelledBooking.cancel_reason || cancel_reason,
+          updatedAt: cancelledBooking.updatedAt
         }
       }
     });
@@ -825,7 +921,8 @@ export const cancelBooking = async (req, res) => {
 
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat membatalkan booking'
+      message: 'Terjadi kesalahan saat membatalkan booking',
+      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
