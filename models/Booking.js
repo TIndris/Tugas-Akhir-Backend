@@ -75,16 +75,31 @@ const bookingSchema = new mongoose.Schema({
       'dp_confirmed',
       'fully_paid',
       'expired',
-      'refunded' // Tambahkan ini jika perlu
+      'refunded'
     ],
     default: 'no_payment'
   },
   payment_deadline: {
     type: Date,
     default: function() {
-      // Payment deadline 24 hours after booking creation
       return new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
+  },
+  catatan: {
+    type: String
+  },
+  special_request: {
+    type: String
+  },
+  cancel_reason: {
+    type: String
+  },
+  rescheduled_at: {
+    type: Date
+  },
+  rescheduled_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   }
 }, {
   timestamps: true,
@@ -109,11 +124,13 @@ bookingSchema.virtual('tanggal_bookingWIB').get(function() {
 bookingSchema.virtual('payment_status_text').get(function() {
   const statusMap = {
     'no_payment': 'Belum Bayar',
-    'pending_payment': 'Menunggu Verifikasi Pembayaran',
+    'pending_verification': 'Menunggu Verifikasi Pembayaran',
     'dp_confirmed': 'DP Terkonfirmasi',
-    'fully_paid': 'Lunas'
+    'fully_paid': 'Lunas',
+    'expired': 'Kadaluarsa',
+    'refunded': 'Dikembalikan'
   };
-  return statusMap[this.payment_status];
+  return statusMap[this.payment_status] || this.payment_status;
 });
 
 // Pre-save validations
@@ -129,7 +146,6 @@ bookingSchema.pre('save', async function(next) {
     throw new Error('Lapangan tidak ditemukan');
   }
 
-  
   if (field.status !== 'tersedia') {
     throw new Error(`Lapangan sedang ${field.status} dan tidak dapat dibooking`);
   }
@@ -172,7 +188,7 @@ bookingSchema.index({ lapangan: 1, tanggal_booking: 1 });
 bookingSchema.index({ pelanggan: 1 });
 bookingSchema.index({ status_pemesanan: 1 });
 
-
+// Static methods
 bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   const existingBooking = await this.findOne({
     lapangan: fieldId,
@@ -183,7 +199,6 @@ bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   return !existingBooking;
 };
 
-
 bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
   return await this.find({
     lapangan: fieldId,
@@ -192,226 +207,5 @@ bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
   }).select('jam_booking pelanggan');
 };
 
+// HANYA EXPORT MODEL - TIDAK ADA CONTROLLER FUNCTIONS
 export default mongoose.model('Booking', bookingSchema);
-
-export const getBookingById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-    const userRole = req.user.role;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'ID booking tidak valid'
-      });
-    }
-
-    const booking = await Booking.findById(id)
-      .populate('userId', 'name email phone')
-      .populate('lapanganId', 'nama harga gambar');
-
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
-      });
-    }
-
-    const isOwner = booking.userId._id.toString() === userId.toString();
-    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
-
-    if (!isOwner && !isCashierOrAdmin) {
-      return res.status(403).json({
-        status: 'error',
-        message: 'Anda tidak memiliki akses ke booking ini'
-      });
-    }
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Detail booking berhasil diambil',
-      data: {
-        booking: {
-          id: booking._id,
-          userId: booking.userId,
-          lapanganId: booking.lapanganId,
-          tanggalBooking: booking.tanggalBooking,
-          jamBooking: booking.jamBooking,
-          durasi: booking.durasi,
-          totalHarga: booking.totalHarga,
-          status: booking.status,
-          paymentStatus: booking.paymentStatus,
-          catatan: booking.catatan,
-          createdAt: booking.createdAt,
-          updatedAt: booking.updatedAt
-        }
-      }
-    });
-
-  } catch (error) {
-    logger.error('Get booking by ID error:', {
-      error: error.message,
-      bookingId: req.params.id,
-      userId: req.user?._id?.toString(),
-      userRole: req.user?.role
-    });
-
-    res.status(500).json({
-      status: 'error',
-      message: 'Terjadi kesalahan saat mengambil detail booking'
-    });
-  }
-};
-
-export const getMyBookings = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const showCancelled = req.query.show_cancelled === 'true'; // Optional parameter
-    
-    // Build filter - exclude cancelled bookings by default
-    const filter = { pelanggan: userId };
-    
-    if (!showCancelled) {
-      filter.status_pemesanan = { $ne: 'cancelled' };
-    }
-
-    // Get bookings with filter
-    const bookings = await Booking.find(filter)
-      .populate('lapangan', 'nama jenis_lapangan harga gambar jam_buka jam_tutup status')
-      .sort({ createdAt: -1 })
-      .lean();
-
-    // Format response
-    const formattedBookings = bookings.map(booking => ({
-      ...booking,
-      lapangan: {
-        ...booking.lapangan,
-        jamOperasional: booking.lapangan?.jam_buka && booking.lapangan?.jam_tutup 
-          ? `${booking.lapangan.jam_buka} - ${booking.lapangan.jam_tutup}`
-          : 'undefined - undefined'
-      }
-    }));
-
-    logger.info('User bookings retrieved', {
-      userId: userId.toString(),
-      totalBookings: formattedBookings.length,
-      showCancelled,
-      action: 'GET_MY_BOOKINGS'
-    });
-
-    res.status(200).json({
-      status: 'success',
-      results: formattedBookings.length,
-      data: { 
-        bookings: formattedBookings 
-      },
-      cached: false,
-      filters: {
-        show_cancelled: showCancelled,
-        total_active: formattedBookings.length
-      }
-    });
-
-  } catch (error) {
-    logger.error(`Get user bookings error: ${error.message}`, {
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Gagal mengambil data booking'
-    });
-  }
-};
-
-export const getMyBookingHistory = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { status, limit = 50, page = 1 } = req.query;
-    
-    // Build filter
-    const filter = { pelanggan: userId };
-    
-    if (status) {
-      filter.status_pemesanan = status;
-    }
-
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Get bookings with filter and pagination
-    const [bookings, totalCount] = await Promise.all([
-      Booking.find(filter)
-        .populate('lapangan', 'nama jenis_lapangan harga gambar jam_buka jam_tutup status')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .lean(),
-      Booking.countDocuments(filter)
-    ]);
-
-    // Format response
-    const formattedBookings = bookings.map(booking => ({
-      ...booking,
-      lapangan: {
-        ...booking.lapangan,
-        jamOperasional: booking.lapangan?.jam_buka && booking.lapangan?.jam_tutup 
-          ? `${booking.lapangan.jam_buka} - ${booking.lapangan.jam_tutup}`
-          : 'undefined - undefined'
-      }
-    }));
-
-    // Group by status for summary
-    const statusSummary = await Booking.aggregate([
-      { $match: { pelanggan: new mongoose.Types.ObjectId(userId) } },
-      { $group: { _id: '$status_pemesanan', count: { $sum: 1 } } },
-      { $sort: { _id: 1 } }
-    ]);
-
-    logger.info('User booking history retrieved', {
-      userId: userId.toString(),
-      totalBookings: formattedBookings.length,
-      totalCount,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      status: status || 'all',
-      action: 'GET_MY_BOOKING_HISTORY'
-    });
-
-    res.status(200).json({
-      status: 'success',
-      results: formattedBookings.length,
-      data: { 
-        bookings: formattedBookings,
-        pagination: {
-          current_page: parseInt(page),
-          per_page: parseInt(limit),
-          total_items: totalCount,
-          total_pages: Math.ceil(totalCount / parseInt(limit))
-        },
-        summary: {
-          by_status: statusSummary.reduce((acc, item) => {
-            acc[item._id] = item.count;
-            return acc;
-          }, {}),
-          total_all: totalCount
-        }
-      }
-    });
-
-  } catch (error) {
-    logger.error(`Get user booking history error: ${error.message}`, {
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Gagal mengambil riwayat booking'
-    });
-  }
-};
-
-export { getMyBookingHistory };
