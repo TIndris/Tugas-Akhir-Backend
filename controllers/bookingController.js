@@ -389,6 +389,116 @@ export const updateBooking = async (req, res) => {
   }
 };
 
+export const updateBookingByCustomer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+    const updateData = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Only booking owner can update their booking
+    const bookingUserId = booking.pelanggan;
+    const isOwner = bookingUserId.toString() === userId.toString();
+
+    if (!isOwner) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda hanya dapat mengubah booking sendiri'
+      });
+    }
+
+    // Check if booking can be updated by customer
+    const canUpdateStatuses = ['pending', 'waiting_payment'];
+    const canUpdatePaymentStatuses = ['no_payment', 'pending_verification'];
+
+    if (!canUpdateStatuses.includes(booking.status_pemesanan)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking ini tidak dapat diubah karena sudah dikonfirmasi'
+      });
+    }
+
+    if (!canUpdatePaymentStatuses.includes(booking.payment_status)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking ini tidak dapat diubah karena pembayaran sudah diproses'
+      });
+    }
+
+    // Customer can only update specific fields
+    const allowedFields = ['catatan', 'special_request'];
+    const filteredData = {};
+    
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        filteredData[field] = updateData[field];
+      }
+    });
+
+    if (Object.keys(filteredData).length === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Tidak ada field yang dapat diubah atau data tidak valid'
+      });
+    }
+
+    const updatedBooking = await Booking.findByIdAndUpdate(
+      id,
+      { ...filteredData, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+
+    logger.info('Booking updated by customer', {
+      bookingId: id,
+      updatedBy: userId,
+      updates: filteredData,
+      action: 'CUSTOMER_UPDATE_BOOKING'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking berhasil diperbarui',
+      data: {
+        booking: {
+          id: updatedBooking._id,
+          catatan: updatedBooking.catatan,
+          special_request: updatedBooking.special_request,
+          updatedAt: updatedBooking.updatedAt
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Customer update booking error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id?.toString(),
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat memperbarui booking'
+    });
+  }
+};
+
 export const deleteBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -593,3 +703,129 @@ export const getAllBookings = async (req, res) => {
 export const getUserBookings = getMyBookings;
 export const getBookings = getAllBookings;
 export const getCashierBookings = getAllBookingsForCashier;
+
+export const cancelBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+    const { cancel_reason } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Authorization check
+    const bookingUserId = booking.pelanggan;
+    const isOwner = bookingUserId.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
+    const hasAccess = isOwner || isCashierOrAdmin;
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses untuk membatalkan booking ini'
+      });
+    }
+
+    // Check if booking can be cancelled
+    const canCancelStatuses = ['pending', 'waiting_payment', 'dp_required'];
+    const canCancelPaymentStatuses = ['no_payment', 'pending_verification', 'expired'];
+
+    if (!canCancelStatuses.includes(booking.status_pemesanan)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking ini tidak dapat dibatalkan karena sudah dikonfirmasi atau selesai'
+      });
+    }
+
+    if (!canCancelPaymentStatuses.includes(booking.payment_status)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking ini tidak dapat dibatalkan karena pembayaran sudah diproses'
+      });
+    }
+
+    // Check deadline (customer can only cancel before deadline)
+    if (userRole === 'customer' && booking.payment_deadline) {
+      const now = new Date();
+      const deadline = new Date(booking.payment_deadline);
+      
+      if (now > deadline) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Booking sudah melewati batas waktu pembayaran dan tidak dapat dibatalkan'
+        });
+      }
+    }
+
+    // Update booking status to cancelled
+    const cancelledBooking = await Booking.findByIdAndUpdate(
+      id,
+      {
+        status_pemesanan: 'cancelled',
+        payment_status: 'cancelled',
+        cancel_reason: cancel_reason || 'Dibatalkan oleh customer',
+        cancelled_at: new Date(),
+        cancelled_by: userId,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    );
+
+    // Invalidate cache
+    await CacheService.invalidateBookingCache(bookingUserId, booking.lapangan, booking.tanggal_booking);
+
+    logger.info('Booking cancelled', {
+      bookingId: id,
+      cancelledBy: userId,
+      userRole,
+      reason: cancel_reason || 'No reason provided',
+      originalStatus: {
+        booking: booking.status_pemesanan,
+        payment: booking.payment_status
+      },
+      action: 'CANCEL_BOOKING'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking berhasil dibatalkan',
+      data: {
+        booking: {
+          id: cancelledBooking._id,
+          status_pemesanan: cancelledBooking.status_pemesanan,
+          payment_status: cancelledBooking.payment_status,
+          cancel_reason: cancelledBooking.cancel_reason,
+          cancelled_at: cancelledBooking.cancelled_at
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Cancel booking error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id?.toString(),
+      userRole: req.user?.role,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat membatalkan booking'
+    });
+  }
+};

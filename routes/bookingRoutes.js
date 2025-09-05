@@ -4,6 +4,8 @@ import {
   getMyBookings,
   getBookingById,
   updateBooking,
+  updateBookingByCustomer,
+  cancelBooking,
   deleteBooking,
   getAllBookings,
   getAllBookingsForCashier, 
@@ -31,6 +33,10 @@ router.get('/admin/all', requireCashierOrAdmin, getAllBookings);
 router.post('/', createBooking);
 router.get('/my-bookings', getMyBookings);
 router.get('/status-summary', getBookingStatusSummary);
+
+// CUSTOMER SPECIFIC ROUTES
+router.patch('/:id/cancel', cancelBooking);
+router.patch('/:id/update', updateBookingByCustomer);
 
 // GENERAL ROUTES (accessible by owner or admin/cashier)
 router.get('/:id/status', getBookingStatus);
