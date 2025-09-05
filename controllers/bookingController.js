@@ -176,7 +176,6 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Coba tanpa populate dulu untuk test
     const booking = await Booking.findById(id);
 
     if (!booking) {
@@ -186,14 +185,14 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Check field yang benar di booking object
-    const bookingUserId = booking.user_id || booking.userId;
+    // Fix: Gunakan field yang benar berdasarkan schema
+    const bookingUserId = booking.pelanggan;
     
     if (!bookingUserId) {
-      logger.error('Booking user field not found', {
+      logger.error('Booking pelanggan field not found', {
         bookingId: id,
         bookingFields: Object.keys(booking.toObject()),
-        schema: 'USER_FIELD_MISSING'
+        schema: 'PELANGGAN_FIELD_MISSING'
       });
       return res.status(500).json({
         status: 'error',
@@ -212,24 +211,24 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Manual populate jika diperlukan
+    // Manual populate dengan field yang benar
     let populatedBooking = booking.toObject();
     
     try {
-      // Populate user
+      // Populate pelanggan (user)
       const User = mongoose.model('User');
       const user = await User.findById(bookingUserId).select('name email phone');
       if (user) {
-        populatedBooking.user = user;
+        populatedBooking.pelanggan_detail = user;
       }
 
-      // Populate field
+      // Populate lapangan (field)
       const Field = mongoose.model('Field');
-      const fieldId = booking.lapangan_id || booking.lapanganId;
+      const fieldId = booking.lapangan;
       if (fieldId) {
         const field = await Field.findById(fieldId).select('nama harga gambar');
         if (field) {
-          populatedBooking.field = field;
+          populatedBooking.lapangan_detail = field;
         }
       }
     } catch (populateError) {
@@ -243,7 +242,23 @@ export const getBookingById = async (req, res) => {
       status: 'success',
       message: 'Detail booking berhasil diambil',
       data: {
-        booking: populatedBooking
+        booking: {
+          id: booking._id,
+          pelanggan: populatedBooking.pelanggan_detail || booking.pelanggan,
+          lapangan: populatedBooking.lapangan_detail || booking.lapangan,
+          jenis_lapangan: booking.jenis_lapangan,
+          tanggal_booking: booking.tanggal_booking,
+          jam_booking: booking.jam_booking,
+          durasi: booking.durasi,
+          harga: booking.harga,
+          status_pemesanan: booking.status_pemesanan,
+          payment_status: booking.payment_status,
+          payment_deadline: booking.payment_deadline,
+          kasir: booking.kasir,
+          konfirmasi_at: booking.konfirmasi_at,
+          createdAt: booking.createdAt,
+          updatedAt: booking.updatedAt
+        }
       }
     });
 
@@ -287,8 +302,8 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    // Fix field reference
-    const bookingUserId = booking.user_id || booking.userId;
+    // Fix: Gunakan field yang benar
+    const bookingUserId = booking.pelanggan;
     
     // Authorization check
     const isOwner = bookingUserId.toString() === userId.toString();
@@ -369,8 +384,8 @@ export const deleteBooking = async (req, res) => {
       });
     }
 
-    // Fix field reference
-    const bookingUserId = booking.user_id || booking.userId;
+    // Fix: Gunakan field yang benar
+    const bookingUserId = booking.pelanggan;
 
     // Authorization check
     const isOwner = bookingUserId.toString() === userId.toString();
@@ -384,7 +399,7 @@ export const deleteBooking = async (req, res) => {
     }
 
     // Check if booking can be deleted (not completed or paid)
-    if (booking.status === 'completed') {
+    if (booking.status_pemesanan === 'completed') {
       return res.status(400).json({
         status: 'error',
         message: 'Booking yang sudah selesai tidak dapat dihapus'
