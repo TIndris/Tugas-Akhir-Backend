@@ -1,6 +1,6 @@
 import { PaymentService } from '../services/paymentService.js';
 import Payment from '../models/Payment.js'; 
-import Booking from '../models/Booking.js'; // ✅ ADD: Missing import
+import Booking from '../models/Booking.js'; 
 import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
@@ -19,7 +19,7 @@ export const createPayment = async (req, res) => {
     } : 'No file');
     console.log('User:', req.user?._id);
 
-    // ✅ Validate request structure first
+   
     if (!req.body || Object.keys(req.body).length === 0) {
       return res.status(400).json({
         status: 'error',
@@ -29,7 +29,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ Extract fields with better error handling
+    
     const { 
       booking_id, 
       payment_type, 
@@ -47,7 +47,7 @@ export const createPayment = async (req, res) => {
       transfer_date: transfer_date || 'missing'
     });
 
-    // ✅ Enhanced validation with detailed error messages
+    
     const validateTransferDate = (dateString) => {
       try {
         if (!dateString || typeof dateString !== 'string') {
@@ -87,7 +87,7 @@ export const createPayment = async (req, res) => {
       }
     };
 
-    // ✅ Validate required fields with better error messages
+    
     if (!booking_id || !payment_type || !sender_name || !transfer_amount || !transfer_date) {
       return res.status(400).json({
         status: 'error',
@@ -109,7 +109,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ Validate transfer date
+    
     let transferDateValid;
     try {
       transferDateValid = validateTransferDate(transfer_date);
@@ -122,7 +122,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ Validate payment type
+    
     const VALID_PAYMENT_TYPES = ['dp_payment', 'full_payment'];
     if (!VALID_PAYMENT_TYPES.includes(payment_type)) {
       return res.status(400).json({
@@ -133,7 +133,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ Validate booking exists and ownership
+    
     if (!mongoose.Types.ObjectId.isValid(booking_id)) {
       return res.status(400).json({
         status: 'error',
@@ -156,7 +156,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ Determine payment amount with better validation
+    
     let paymentAmount;
     if (payment_type === 'dp_payment') {
       paymentAmount = 50000; // Fixed DP amount
@@ -180,7 +180,7 @@ export const createPayment = async (req, res) => {
       }
     }
 
-    // ✅ Validate file upload with production compatibility
+    
     if (!req.file) {
       return res.status(400).json({
         status: 'error',
@@ -190,17 +190,17 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ PRODUCTION: Handle memory vs disk storage
+    
     let transferProofPath;
     if (process.env.NODE_ENV === 'production') {
-      // In production (memory storage), we'll store the buffer
+      
       transferProofPath = req.file.buffer ? 'memory-buffer-stored' : req.file.path;
     } else {
-      // In development (disk storage), use file path
+      
       transferProofPath = req.file.path;
     }
 
-    // ✅ Check for existing payment
+    
     const existingPayment = await Payment.findOne({
       booking: booking_id,
       status: { $in: ['pending', 'verified'] }
@@ -219,7 +219,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    // ✅ Handle rejected payments - mark as replaced
+    
     const rejectedPayments = await Payment.find({
       booking: booking_id,
       status: 'rejected'
@@ -236,7 +236,7 @@ export const createPayment = async (req, res) => {
       );
     }
 
-    // ✅ Get bank details with error handling
+    
     let bankDetails = null;
     let availableBanks = [];
     try {
@@ -246,14 +246,14 @@ export const createPayment = async (req, res) => {
       logger.warn('Bank details unavailable during payment creation:', bankError.message);
     }
 
-    // ✅ Prepare payment data for service
+    
     const paymentData = {
       bookingId: booking_id,
       userId: req.user._id,
       paymentType: payment_type,
       amount: paymentAmount,
-      transferProof: transferProofPath,  // Use production-safe path
-      transferProofBuffer: req.file.buffer, // Store buffer for production
+      transferProof: transferProofPath,
+      transferProofBuffer: req.file.buffer,
       transferDetails: {
         sender_name: sender_name.trim(),
         transfer_amount: parseInt(transfer_amount),
@@ -263,16 +263,16 @@ export const createPayment = async (req, res) => {
       }
     };
 
-    // ✅ Create payment using service
+    
     const payment = await PaymentService.createPayment(paymentData);
     
-    // ✅ Get payment summary
+    
     const paymentSummary = PaymentService.calculatePaymentSummary(
       payment.total_booking_amount, 
       payment.payment_type
     );
 
-    // ✅ Clear caches
+    
     try {
       if (client && client.isOpen) {
         await client.del('payments:pending');
@@ -283,7 +283,7 @@ export const createPayment = async (req, res) => {
       logger.warn('Redis cache clear error:', redisError);
     }
 
-    // ✅ Log successful payment creation
+    
     logger.info(`Payment created successfully: ${payment._id}`, {
       user: req.user._id,
       booking: booking_id,
@@ -292,7 +292,7 @@ export const createPayment = async (req, res) => {
       replaced_rejected: rejectedPayments.length
     });
 
-    // ✅ Enhanced response
+    
     res.status(201).json({
       status: 'success',
       message: rejectedPayments.length > 0 
@@ -350,13 +350,13 @@ export const createPayment = async (req, res) => {
   }
 };
 
-// ✅ APPROVE PAYMENT - Simple endpoint
+
 export const approvePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const { notes } = req.body;
 
-    // Try PaymentService first
+    
     try {
       const payment = await PaymentService.approvePayment(
         paymentId,
@@ -364,7 +364,7 @@ export const approvePayment = async (req, res) => {
         notes || 'Pembayaran disetujui oleh kasir'
       );
 
-      // Clear cache
+      
       try {
         if (client && client.isOpen) {
           await client.del('payments:pending');
@@ -396,7 +396,7 @@ export const approvePayment = async (req, res) => {
       });
 
     } catch (serviceError) {
-      // Fallback to direct logic if service fails
+      
       console.log('PaymentService failed, using direct logic:', serviceError.message);
       
       const payment = await Payment.findById(paymentId).populate('booking');
@@ -408,7 +408,7 @@ export const approvePayment = async (req, res) => {
         });
       }
 
-      // Allow both pending and rejected
+      
       if (!['pending', 'rejected'].includes(payment.status)) {
         return res.status(400).json({
           status: 'error',
@@ -424,19 +424,19 @@ export const approvePayment = async (req, res) => {
         });
       }
 
-      // Update payment
+      
       payment.status = 'verified';
       payment.verified_by = req.user._id;
       payment.verified_at = new Date();
       payment.notes = notes || 'Pembayaran disetujui';
 
-      // Handle previous rejection
+      
       if (payment.rejection_reason) {
         payment.previous_rejection_reason = payment.rejection_reason;
         payment.rejection_reason = undefined;
       }
 
-      // Update booking
+      
       booking.status_pemesanan = 'confirmed';
       booking.payment_status = payment.payment_type === 'full_payment' 
         ? 'fully_paid' 
@@ -444,11 +444,11 @@ export const approvePayment = async (req, res) => {
       booking.kasir = req.user._id;
       booking.konfirmasi_at = new Date();
 
-      // Save changes
+      
       await payment.save();
       await booking.save();
 
-      // Clear cache
+      
       try {
         if (client && client.isOpen) {
           await client.del('payments:pending');
@@ -493,7 +493,7 @@ export const approvePayment = async (req, res) => {
   }
 };
 
-// ❌ REJECT PAYMENT - Fixed version
+
 export const rejectPayment = async (req, res) => {
   try {
     console.log('=== PAYMENT REJECTION DEBUG ===');
@@ -511,16 +511,16 @@ export const rejectPayment = async (req, res) => {
       });
     }
 
-    // Use PaymentService if available, otherwise direct logic
+    
     if (PaymentService && PaymentService.rejectPayment) {
-      // ✅ Use Service (Recommended)
+      
       const payment = await PaymentService.rejectPayment(
         paymentId,
         req.user._id,
         finalReason.trim()
       );
 
-      // Clear cache
+      
       try {
         if (client && client.isOpen) {
           await client.del('payments:pending');
@@ -545,7 +545,7 @@ export const rejectPayment = async (req, res) => {
       });
 
     } else {
-      // ✅ Fallback Direct Logic (with proper imports)
+      
       const payment = await Payment.findById(paymentId).populate('booking');
       
       if (!payment) {
@@ -555,24 +555,24 @@ export const rejectPayment = async (req, res) => {
         });
       }
 
-      // Update payment
+      
       payment.status = 'rejected';
       payment.verified_by = req.user._id;
       payment.verified_at = new Date();
       payment.rejection_reason = finalReason.trim();
 
-      // Reset booking
+      
       const booking = payment.booking;
       booking.status_pemesanan = 'pending';
       booking.payment_status = 'no_payment';
       booking.kasir = undefined;
       booking.konfirmasi_at = undefined;
 
-      // Save both documents
+    
       await payment.save();
       await booking.save();
 
-      // Clear cache
+      
       try {
         if (client && client.isOpen) {
           await client.del('payments:pending');
@@ -610,7 +610,7 @@ export const getPendingPayments = async (req, res) => {
   try {
     const cacheKey = 'payments:pending';
     
-    // Check cache first
+    
     let cachedPayments = null;
     try {
       if (client && client.isOpen) {
@@ -630,7 +630,7 @@ export const getPendingPayments = async (req, res) => {
     }
 
     const payments = await Payment.find({ 
-      status: 'pending'  // ← Hanya pending, tidak include replaced/rejected
+      status: 'pending'
     })
     .populate('user', 'name email')
     .populate({
@@ -642,7 +642,7 @@ export const getPendingPayments = async (req, res) => {
     })
     .sort({ createdAt: -1 });
 
-    // Cache for 2 minutes
+    
     try {
       if (client && client.isOpen) {
         await client.setEx(cacheKey, 120, JSON.stringify(payments));
@@ -761,7 +761,7 @@ export const getPaymentById = async (req, res) => {
 
 export const getBankInfo = async (req, res) => {
   try {
-    // ✅ Handle bank details error gracefully
+    
     let bankDetails = null;
     let availableBanks = [];
     
@@ -816,7 +816,7 @@ export const getBankInfo = async (req, res) => {
   }
 };
 
-// ✅ Helper function for date display
+
 const formatDateDisplay = (dateString) => {
   const date = new Date(dateString + 'T00:00:00.000Z');
   return date.toLocaleDateString('id-ID', {

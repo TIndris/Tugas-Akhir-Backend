@@ -2,10 +2,10 @@ import User from '../models/User.js';
 import logger from '../config/logger.js';
 import { ProfileService } from '../services/profileService.js';
 
-// ============= GET USER PROFILE =============
+
 export const getProfile = async (req, res) => {
   try {
-    // Get user from token (sudah tersedia dari authenticateToken middleware)
+    
     const user = await User.findById(req.user._id).select('-password');
     
     if (!user) {
@@ -51,7 +51,7 @@ export const getProfile = async (req, res) => {
   }
 };
 
-// ============= UPDATE USER PROFILE =============
+
 export const updateProfile = async (req, res) => {
   try {
     const { name, email, phone } = req.body;
@@ -62,7 +62,7 @@ export const updateProfile = async (req, res) => {
       action: 'UPDATE_PROFILE_ATTEMPT'
     });
 
-    // ✅ MOVED TO SERVICE: Validation logic
+    
     const validationErrors = ProfileService.validateProfileUpdate({ name, email, phone });
     if (validationErrors.length > 0) {
       return res.status(400).json({
@@ -72,7 +72,7 @@ export const updateProfile = async (req, res) => {
       });
     }
 
-    // ✅ KEEP: Get current user (Controller responsibility)
+    
     const currentUser = await User.findById(userId);
     if (!currentUser) {
       return res.status(404).json({
@@ -81,7 +81,7 @@ export const updateProfile = async (req, res) => {
       });
     }
 
-    // ✅ MOVED TO SERVICE: Email uniqueness check
+    
     if (email.trim().toLowerCase() !== currentUser.email.toLowerCase()) {
       const isEmailUnique = await ProfileService.checkEmailUniqueness(email, userId);
       if (!isEmailUnique) {
@@ -93,10 +93,10 @@ export const updateProfile = async (req, res) => {
       }
     }
 
-    // ✅ MOVED TO SERVICE: Update operation
+    
     const updatedUser = await ProfileService.updateUserProfile(userId, { name, email, phone });
 
-    // ✅ KEEP: Logging and response (Controller responsibility)
+    
     logger.info(`Profile updated successfully: ${userId}`, {
       updatedFields: ['name', 'email', phone ? 'phone' : null].filter(Boolean),
       action: 'UPDATE_PROFILE_SUCCESS'
@@ -127,7 +127,7 @@ export const updateProfile = async (req, res) => {
       stack: error.stack
     });
 
-    // ✅ KEEP: Error handling
+    
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,

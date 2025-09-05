@@ -10,7 +10,7 @@ export const createField = async (req, res) => {
     console.log('req.body:', req.body);
     console.log('req.file:', req.file);
     
-    // ✅ KEEP: File upload validation (Controller responsibility)
+  
     if (!req.file || !req.file.path) {
       return res.status(400).json({
         status: 'error',
@@ -24,10 +24,10 @@ export const createField = async (req, res) => {
 
     const gambar = req.file.path;
     
-    // ✅ MOVED TO SERVICE: Field validation
+    
     const validatedData = await FieldService.validateFieldCreation(req.body);
     
-    // ✅ KEEP: Database operation with file path
+    
     const field = await Field.create({
       ...validatedData,
       gambar,
@@ -36,7 +36,7 @@ export const createField = async (req, res) => {
 
     console.log('Field created successfully:', field._id);
 
-    // ✅ KEEP: Cache management
+    
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -47,7 +47,7 @@ export const createField = async (req, res) => {
       logger.warn('Redis cache clear error:', redisError);
     }
 
-    // ✅ KEEP: Response formatting
+    
     logger.info(`Field created: ${field._id}`, {
       role: req.user.role,
       action: 'CREATE_FIELD'
@@ -67,7 +67,7 @@ export const createField = async (req, res) => {
       action: 'CREATE_FIELD_ERROR'
     });
 
-    // ✅ KEEP: Error handling
+    
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       const value = error.keyValue[field];
@@ -110,7 +110,7 @@ export const updateField = async (req, res) => {
   try {
     const fieldId = req.params.id;
     
-    // ✅ KEEP: Input validation
+    
     const hasFormData = req.body && Object.keys(req.body).length > 0;
     const hasFile = req.file && req.file.path;
     
@@ -121,7 +121,7 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // ✅ KEEP: ID validation
+    
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
@@ -129,7 +129,7 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // ✅ KEEP: Process form data (Controller responsibility)
+    
     const updateData = {};
     
     if (hasFormData) {
@@ -167,17 +167,17 @@ export const updateField = async (req, res) => {
       });
     }
 
-    // ✅ MOVED TO SERVICE: Business validation
+    
     const currentField = await FieldService.validateFieldUpdate(fieldId, updateData);
 
-    // ✅ KEEP: Database operation
+    
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
       { new: true, runValidators: true }
     );
 
-    // ✅ KEEP: Cache management and response
+    
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -234,13 +234,13 @@ export const updateField = async (req, res) => {
   }
 };
 
-// Get all fields dengan Redis caching - FIXED untuk konsistensi
+
 export const getAllFields = async (req, res) => {
   try {
     const { jenis_lapangan, status } = req.query;
     const cacheKey = `fields:all:${jenis_lapangan || 'all'}:${status || 'all'}`;
     
-    // Check cache first
+    
     let cachedFields = null;
     try {
       if (client && client.isOpen) {
@@ -260,15 +260,15 @@ export const getAllFields = async (req, res) => {
       });
     }
 
-    // Build query filter
+   
     const filter = {};
     if (jenis_lapangan) filter.jenis_lapangan = jenis_lapangan;
     if (status) filter.status = status;
 
-    // HAPUS .lean() agar virtual fields aktif
+    
     const fields = await Field.find(filter);
     
-    // Cache for 5 minutes
+    
     try {
       if (client && client.isOpen) {
         await client.setEx(cacheKey, 300, JSON.stringify(fields));
@@ -296,13 +296,13 @@ export const getAllFields = async (req, res) => {
   }
 };
 
-// Get single field dengan cache - FIXED untuk konsistensi
+
 export const getField = async (req, res) => {
   try {
     const fieldId = req.params.id;
     const cacheKey = `field:${fieldId}`;
     
-    // Check cache first
+    
     let cachedField = null;
     try {
       if (client && client.isOpen) {
@@ -319,7 +319,7 @@ export const getField = async (req, res) => {
       });
     }
 
-    // HAPUS .lean() agar virtual fields aktif
+    
     const field = await Field.findById(fieldId);
     if (!field) {
       return res.status(404).json({
@@ -333,7 +333,7 @@ export const getField = async (req, res) => {
       });
     }
 
-    // Cache single field for 10 minutes
+    
     try {
       if (client && client.isOpen) {
         await client.setEx(cacheKey, 600, JSON.stringify(field));
@@ -359,7 +359,7 @@ export const getField = async (req, res) => {
   }
 };
 
-// Delete field
+
 export const deleteField = async (req, res) => {
   try {
     const fieldId = req.params.id;
@@ -377,7 +377,7 @@ export const deleteField = async (req, res) => {
       });
     }
 
-    // Clear cache after delete
+    
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -415,7 +415,7 @@ export const deleteField = async (req, res) => {
   }
 };
 
-// TAMBAH FUNCTION INI DI AKHIR FILE
+
 export const updateFieldJSON = async (req, res) => {
   try {
     console.log('=== UPDATE FIELD JSON DEBUG ===');
@@ -427,7 +427,7 @@ export const updateFieldJSON = async (req, res) => {
     const fieldId = req.params.id;
     const updateData = { ...req.body };
 
-    // Check if body exists and has data
+    
     if (!req.body || Object.keys(req.body).length === 0) {
       return res.status(400).json({
         status: 'error',
@@ -435,7 +435,7 @@ export const updateFieldJSON = async (req, res) => {
       });
     }
 
-    // Validate ObjectId format
+    
     if (!mongoose.Types.ObjectId.isValid(fieldId)) {
       return res.status(400).json({
         status: 'error',
@@ -443,7 +443,7 @@ export const updateFieldJSON = async (req, res) => {
       });
     }
 
-    // Get current field
+    
     const currentField = await Field.findById(fieldId);
     if (!currentField) {
       return res.status(404).json({
@@ -458,7 +458,7 @@ export const updateFieldJSON = async (req, res) => {
       status: currentField.status
     });
 
-    // Check for duplicate name (if nama is being updated)
+    
     if (updateData.nama && updateData.nama !== currentField.nama) {
       const existingField = await Field.findOne({ 
         nama: updateData.nama, 
@@ -475,13 +475,13 @@ export const updateFieldJSON = async (req, res) => {
 
     console.log('About to update with data:', updateData);
 
-    // Update field - PENTING: runValidators true
+    
     const field = await Field.findByIdAndUpdate(
       fieldId,
       updateData,
       {
-        new: true, // Return updated document
-        runValidators: true // Validate the update
+        new: true, 
+        runValidators: true 
       }
     );
 
@@ -495,7 +495,7 @@ export const updateFieldJSON = async (req, res) => {
       updatedAt: field.updatedAt
     });
 
-    // Clear cache after update
+    
     try {
       if (client && client.isOpen) {
         await client.del('fields:all:all:all');
@@ -528,7 +528,7 @@ export const updateFieldJSON = async (req, res) => {
       body: req.body
     });
 
-    // Handle validation errors
+    
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => ({
         field: err.path,

@@ -4,9 +4,7 @@ import BookingStatusService from '../services/bookingStatusService.js';
 import CacheService from '../services/cacheService.js';
 import logger from '../config/logger.js';
 
-// ============= USER BOOKING OPERATIONS =============
 
-// ✅ Create booking - THIN CONTROLLER
 export const createBooking = async (req, res) => {
   try {
     const { lapangan_id, tanggal_booking, jam_booking, durasi } = req.body;
@@ -77,7 +75,7 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// ✅ Get availability - THIN CONTROLLER
+
 export const getAvailability = async (req, res) => {
   try {
     const { lapangan, tanggal, jam, durasi } = req.query;
@@ -130,10 +128,10 @@ export const getAvailability = async (req, res) => {
   }
 };
 
-// ✅ Backward compatibility
+
 export const checkAvailability = getAvailability;
 
-// ✅ Get user bookings - THIN CONTROLLER
+
 export const getMyBookings = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -160,10 +158,9 @@ export const getMyBookings = async (req, res) => {
   }
 };
 
-// ✅ Aliases
 export const getUserBookings = getMyBookings;
 
-// ✅ Get booking by ID - THIN CONTROLLER
+
 export const getBookingById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -192,7 +189,7 @@ export const getBookingById = async (req, res) => {
   }
 };
 
-// ✅ Update booking - THIN CONTROLLER
+
 export const updateBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -200,7 +197,7 @@ export const updateBooking = async (req, res) => {
 
     const booking = await BookingService.updateBookingWithValidation(id, userId, req.body);
 
-    // Cache invalidation
+  
     await CacheService.invalidateBookingCache(userId, booking.lapangan._id, booking.tanggal_booking);
 
     logger.info(`Booking updated: ${booking._id}`, {
@@ -228,7 +225,7 @@ export const updateBooking = async (req, res) => {
   }
 };
 
-// ✅ Delete booking - THIN CONTROLLER
+
 export const deleteBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -236,7 +233,7 @@ export const deleteBooking = async (req, res) => {
 
     const { booking, action } = await BookingService.deleteBookingWithPaymentCheck(id, userId);
 
-    // Cache invalidation
+
     await CacheService.invalidateBookingCache(userId, booking.lapangan._id, booking.tanggal_booking);
 
     logger.info(`Booking ${action}: ${booking._id}`, {
@@ -264,9 +261,7 @@ export const deleteBooking = async (req, res) => {
   }
 };
 
-// ============= BOOKING STATUS OPERATIONS =============
 
-// ✅ Get booking status - THIN CONTROLLER
 export const getBookingStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -294,7 +289,7 @@ export const getBookingStatus = async (req, res) => {
   }
 };
 
-// ✅ Get booking status summary - THIN CONTROLLER
+
 export const getBookingStatusSummary = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -320,9 +315,7 @@ export const getBookingStatusSummary = async (req, res) => {
   }
 };
 
-// ============= KASIR & ADMIN OPERATIONS =============
 
-// ✅ Get all bookings for cashier - THIN CONTROLLER
 export const getAllBookingsForCashier = async (req, res) => {
   try {
     const filters = {
@@ -365,7 +358,7 @@ export const getAllBookingsForCashier = async (req, res) => {
   }
 };
 
-// ✅ Get all bookings for admin - THIN CONTROLLER
+
 export const getAllBookings = async (req, res) => {
   try {
     const filters = {
@@ -407,6 +400,6 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
-// ✅ Aliases for backward compatibility
+
 export const getBookings = getAllBookings;
 export const getCashierBookings = getAllBookingsForCashier;

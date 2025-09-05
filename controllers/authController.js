@@ -2,12 +2,11 @@ import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 import logger from '../config/logger.js';
 import { blacklistToken } from '../utils/tokenManager.js';
-import passport from 'passport';
 
 const loginAttempts = new Map();
-const logoutTimestamps = new Map(); // Track logout timestamps for users
+const logoutTimestamps = new Map(); 
 
-// ✅ EXISTING: Logout function (tetap sama)
+
 export const logout = async (req, res) => {
   try {
     if (!req.user) {
@@ -49,7 +48,7 @@ export const logout = async (req, res) => {
   }
 };
 
-// ✅ EXISTING: Logout all sessions (tetap sama)
+
 export const logoutAllSessions = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -82,7 +81,7 @@ export const logoutAllSessions = async (req, res) => {
   }
 };
 
-// ✅ EXISTING: Login function (tetap sama)
+
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -101,7 +100,7 @@ export const login = async (req, res) => {
       });
     }
 
-    // ✅ UPDATE: Check if Google user trying to login with password
+    
     if (user.googleId && !user.password) {
       logger.warn(`Google user attempting password login: ${email}`, {
         action: 'GOOGLE_USER_PASSWORD_ATTEMPT'
@@ -153,7 +152,7 @@ export const login = async (req, res) => {
           name: user.name,
           email: user.email,
           role: user.role,
-          // ✅ ADD: Google user info
+          
           authProvider: user.authProvider || 'local',
           picture: user.picture,
           isEmailVerified: user.isEmailVerified
@@ -171,7 +170,7 @@ export const login = async (req, res) => {
   }
 };
 
-// ✅ EXISTING: Register function (tetap sama)
+
 export const register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -196,7 +195,7 @@ export const register = async (req, res) => {
       password,
       role: 'customer',
       isEmailVerified: false,
-      authProvider: 'local' // ✅ ADD: Mark as local auth
+      authProvider: 'local'
     });
 
     logger.info(`Registration successful: ${email}`, {
@@ -239,7 +238,7 @@ export const register = async (req, res) => {
   }
 };
 
-// ✅ NEW: Google OAuth callback handler (untuk dipindahkan ke routes)
+
 export const googleCallbackHandler = async (req, res) => {
   try {
     if (!req.user) {
@@ -262,7 +261,7 @@ export const googleCallbackHandler = async (req, res) => {
       isNewUser: user.isNewUser || false
     });
 
-    // ✅ OPTION 1: Set cookie (same as existing callback)
+    
     res.cookie('jwt', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -270,7 +269,7 @@ export const googleCallbackHandler = async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000
     });
 
-    // ✅ OPTION 2: Redirect with user data for frontend
+    
     const userData = {
       id: user._id,
       name: user.name,
@@ -292,7 +291,7 @@ export const googleCallbackHandler = async (req, res) => {
   }
 };
 
-// ✅ NEW: Set password for Google users
+
 export const setPassword = async (req, res) => {
   try {
     const { password, confirmPassword } = req.body;
@@ -346,7 +345,7 @@ export const setPassword = async (req, res) => {
   }
 };
 
-// ✅ NEW: Get auth providers info
+
 export const getAuthInfo = async (req, res) => {
   try {
     const user = req.user;
@@ -371,7 +370,7 @@ export const getAuthInfo = async (req, res) => {
   }
 };
 
-// ✅ Export function untuk check logout timestamps (untuk middleware)
+
 export const checkLogoutTimestamp = (userId, tokenIssuedAt) => {
   const userLogoutTime = logoutTimestamps.get(userId.toString());
   return userLogoutTime && tokenIssuedAt < userLogoutTime;

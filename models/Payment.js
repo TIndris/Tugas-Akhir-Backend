@@ -150,7 +150,7 @@ paymentSchema.virtual('status_text').get(function() {
   return statusMap[this.status];
 });
 
-// ✅ Virtual for Indonesian date display
+
 paymentSchema.virtual('transfer_details.transfer_date_display').get(function() {
   if (this.transfer_details.transfer_date_string) {
     const date = new Date(this.transfer_details.transfer_date_string + 'T00:00:00.000Z');

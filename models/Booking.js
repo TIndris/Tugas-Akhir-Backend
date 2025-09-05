@@ -125,7 +125,7 @@ bookingSchema.pre('save', async function(next) {
     throw new Error('Lapangan tidak ditemukan');
   }
 
-  // ✅ TAMBAHKAN: Validasi status lapangan
+  
   if (field.status !== 'tersedia') {
     throw new Error(`Lapangan sedang ${field.status} dan tidak dapat dibooking`);
   }
@@ -168,7 +168,7 @@ bookingSchema.index({ lapangan: 1, tanggal_booking: 1 });
 bookingSchema.index({ pelanggan: 1 });
 bookingSchema.index({ status_pemesanan: 1 });
 
-// ✅ ADD: Static method for availability check
+
 bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   const existingBooking = await this.findOne({
     lapangan: fieldId,
@@ -179,7 +179,7 @@ bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
   return !existingBooking;
 };
 
-// ✅ ADD: Get booked slots for a specific date and field
+
 bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
   return await this.find({
     lapangan: fieldId,

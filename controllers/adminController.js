@@ -1,8 +1,6 @@
 import User from '../models/User.js';
 import BankAccount from '../models/BankAccount.js';
-import logger from '../config/logger.js';  // ← FIXED PATH
-
-// ============= CASHIER MANAGEMENT =============
+import logger from '../config/logger.js'; 
 
 export const createCashier = async (req, res) => {
   try {
@@ -67,7 +65,7 @@ export const getCashiers = async (req, res) => {
   }
 };
 
-// ============= BANK ACCOUNT MANAGEMENT =============
+
 
 // Create bank account
 export const createBankAccount = async (req, res) => {

@@ -7,20 +7,19 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// ✅ FIX: Dynamic callback URL untuk production
 const getCallbackURL = () => {
-  // ✅ PRODUCTION: Gunakan BACKEND_URL dari environment
+  
   if (process.env.NODE_ENV === 'production') {
     return `${process.env.BACKEND_URL}/auth/google/callback`;
   }
-  // ✅ DEVELOPMENT: Gunakan localhost
+  
   return 'http://localhost:5000/auth/google/callback';
 };
 
-// ✅ JWT Strategy (untuk existing system)
+
 passport.use(new JwtStrategy({
   jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-  secretOrKey: process.env.SESSION_SECRET // ✅ FIX: Use SESSION_SECRET untuk konsistensi
+  secretOrKey: process.env.SESSION_SECRET 
 }, async (payload, done) => {
   try {
     const user = await User.findById(payload.id);
@@ -33,11 +32,10 @@ passport.use(new JwtStrategy({
   }
 }));
 
-// ✅ Google OAuth Strategy
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: getCallbackURL(), // ✅ FIXED: Akan return production URL
+  callbackURL: getCallbackURL(), 
   scope: ['profile', 'email']
 }, async (accessToken, refreshToken, profile, done) => {
   try {
@@ -45,16 +43,16 @@ passport.use(new GoogleStrategy({
       googleId: profile.id,
       email: profile.emails?.[0]?.value,
       name: profile.displayName,
-      callbackURL: getCallbackURL() // ✅ ADD: Log callback URL untuk debugging
+      callbackURL: getCallbackURL() 
     });
 
-    // ✅ Cek user berdasarkan Google ID
+    
     let existingUser = await User.findOne({ googleId: profile.id });
     
     if (existingUser) {
       // Update last login dan authProvider
       existingUser.lastLogin = new Date();
-      existingUser.authProvider = 'google'; // ✅ Ensure authProvider set
+      existingUser.authProvider = 'google'; 
       await existingUser.save();
       
       logger.info('Existing Google user logged in', {
@@ -65,13 +63,13 @@ passport.use(new GoogleStrategy({
       return done(null, existingUser);
     }
 
-    // ✅ Cek user berdasarkan email (untuk link existing account)
+    
     const emailUser = await User.findOne({ 
       email: profile.emails[0].value 
     });
 
     if (emailUser) {
-      // ✅ Link existing account dengan Google
+      
       emailUser.googleId = profile.id;
       emailUser.picture = profile.photos?.[0]?.value;
       emailUser.isEmailVerified = true;
@@ -87,7 +85,7 @@ passport.use(new GoogleStrategy({
       return done(null, emailUser);
     }
 
-    // ✅ Buat user baru dari Google
+    
     const newUser = await User.create({
       googleId: profile.id,
       name: profile.displayName,
@@ -97,7 +95,7 @@ passport.use(new GoogleStrategy({
       authProvider: 'google',
       role: 'customer', // Default role sesuai schema
       lastLogin: new Date()
-      // ✅ REMOVE: tokenVersion (tidak ada di schema existing)
+      
     });
 
     logger.info('New user created via Google OAuth', {
@@ -114,7 +112,7 @@ passport.use(new GoogleStrategy({
   }
 }));
 
-// ✅ Serialize/Deserialize
+
 passport.serializeUser((user, done) => {
   done(null, user._id);
 });
