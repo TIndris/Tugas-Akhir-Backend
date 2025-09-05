@@ -4,14 +4,12 @@ import BookingStatusService from '../services/bookingStatusService.js';
 import CacheService from '../services/cacheService.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
-import Booking from '../models/Booking.js'; // Assuming the Booking model is in models/Booking.js
-
+import Booking from '../models/Booking.js';
 
 export const createBooking = async (req, res) => {
   try {
     const { lapangan_id, tanggal_booking, jam_booking, durasi } = req.body;
     
-    // Basic HTTP validation only
     if (!lapangan_id || !tanggal_booking || !jam_booking || !durasi) {
       return res.status(400).json({
         status: 'error',
@@ -19,7 +17,6 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // Delegate ALL logic to service
     const booking = await BookingService.createBookingWithFullValidation({
       userId: req.user._id,
       lapanganId: lapangan_id,
@@ -28,10 +25,8 @@ export const createBooking = async (req, res) => {
       durasi
     });
 
-    // Cache invalidation
     await CacheService.invalidateBookingCache(req.user._id, lapangan_id, tanggal_booking);
 
-    // Logging
     logger.info(`Booking created: ${booking._id}`, {
       user: req.user._id,
       field: lapangan_id,
@@ -52,7 +47,6 @@ export const createBooking = async (req, res) => {
       stack: error.stack
     });
     
-    // Handle specific error types
     if (error.errorCode === 'SLOT_CONFLICT') {
       return res.status(409).json({
         status: 'error',
@@ -76,7 +70,6 @@ export const createBooking = async (req, res) => {
     });
   }
 };
-
 
 export const getAvailability = async (req, res) => {
   try {
@@ -130,9 +123,7 @@ export const getAvailability = async (req, res) => {
   }
 };
 
-
 export const checkAvailability = getAvailability;
-
 
 export const getMyBookings = async (req, res) => {
   try {
@@ -160,22 +151,11 @@ export const getMyBookings = async (req, res) => {
   }
 };
 
-export const getUserBookings = getMyBookings;
-
-
 export const getBookingById = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
     const userRole = req.user.role;
-
-    // Log untuk debugging
-    logger.info('Get booking by ID attempt', {
-      bookingId: id,
-      requestUserId: userId.toString(),
-      userRole,
-      action: 'GET_BOOKING_DETAIL'
-    });
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -193,82 +173,41 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Debug booking data
-    logger.info('Booking found for access check', {
-      bookingId: id,
-      bookingData: {
-        pelanggan: booking.pelanggan?.toString() || 'null',
-        kasir: booking.kasir?.toString() || 'null',
-        status_pemesanan: booking.status_pemesanan,
-        payment_status: booking.payment_status
-      }
-    });
-
     const bookingUserId = booking.pelanggan;
     
-    // Enhanced authorization check dengan detailed logging
+    // FIXED: Support both 'kasir' and 'cashier' roles
     const isOwner = bookingUserId && bookingUserId.toString() === userId.toString();
-    const isCashierRole = userRole === 'kasir';
-    const isAdminRole = userRole === 'admin';
-    const isCashierOrAdmin = isCashierRole || isAdminRole;
-
-    // Log detailed access check
-    logger.info('Access control check', {
-      bookingId: id,
-      requestUserId: userId.toString(),
-      bookingUserId: bookingUserId?.toString() || 'null',
-      userRole,
-      checks: {
-        isOwner,
-        isCashierRole,
-        isAdminRole,
-        isCashierOrAdmin
-      }
-    });
-
-    // FIXED: Allow kasir and admin to access ALL bookings
+    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
     const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
-      logger.warn('Access denied to booking', {
-        bookingId: id,
-        requestUserId: userId.toString(),
-        userRole,
-        reason: 'Insufficient permissions'
-      });
-      
       return res.status(403).json({
         status: 'error',
         message: 'Anda tidak memiliki akses ke booking ini'
       });
     }
 
-    // Manual populate dengan error handling yang lebih baik
     let populatedBooking = {};
     
     try {
       const User = mongoose.model('User');
       const Field = mongoose.model('Field');
 
-      // Populate customer
       let user = null;
       if (bookingUserId) {
         user = await User.findById(bookingUserId).select('name email phone');
       }
       
-      // Populate field
       let field = null;
       if (booking.lapangan) {
         field = await Field.findById(booking.lapangan).select('nama harga');
       }
       
-      // Populate kasir if exists
       let kasir = null;
       if (booking.kasir) {
         kasir = await User.findById(booking.kasir).select('name email');
       }
 
-      // Build response
       populatedBooking = {
         id: booking._id,
         customer: user ? {
@@ -311,11 +250,9 @@ export const getBookingById = async (req, res) => {
     } catch (populateError) {
       logger.error('Populate error in getBookingById', {
         error: populateError.message,
-        bookingId: id,
-        stack: populateError.stack
+        bookingId: id
       });
       
-      // Fallback response
       populatedBooking = {
         id: booking._id,
         customer: { 
@@ -346,13 +283,6 @@ export const getBookingById = async (req, res) => {
       };
     }
 
-    logger.info('Booking detail access successful', {
-      bookingId: id,
-      accessedBy: userId.toString(),
-      userRole,
-      accessType: isOwner ? 'owner' : 'staff'
-    });
-
     res.status(200).json({
       status: 'success',
       message: 'Detail booking berhasil diambil',
@@ -364,7 +294,6 @@ export const getBookingById = async (req, res) => {
   } catch (error) {
     logger.error('Get booking by ID error:', {
       error: error.message,
-      stack: error.stack,
       bookingId: req.params.id,
       userId: req.user?._id?.toString(),
       userRole: req.user?.role
@@ -376,7 +305,6 @@ export const getBookingById = async (req, res) => {
     });
   }
 };
-
 
 export const updateBooking = async (req, res) => {
   try {
@@ -401,13 +329,9 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    // FIXED: Consistent authorization logic
     const bookingUserId = booking.pelanggan;
-    
     const isOwner = bookingUserId.toString() === userId.toString();
-    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
-
-    // FIXED: Kasir dan Admin bisa akses SEMUA booking
+    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
     const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
@@ -417,7 +341,6 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    // Restrict certain fields based on role
     if (userRole === 'customer') {
       const allowedFields = ['catatan'];
       const filteredData = {};
@@ -429,8 +352,7 @@ export const updateBooking = async (req, res) => {
       updateData = filteredData;
     }
 
-    // Add kasir assignment if kasir is updating and not assigned yet
-    if (userRole === 'kasir' && !booking.kasir) {
+    if (['kasir', 'cashier'].includes(userRole) && !booking.kasir) {
       updateData.kasir = userId;
     }
 
@@ -444,7 +366,6 @@ export const updateBooking = async (req, res) => {
       bookingId: id,
       updatedBy: userId,
       userRole,
-      kasirAssigned: !booking.kasir && userRole === 'kasir',
       action: 'UPDATE_BOOKING'
     });
 
@@ -459,7 +380,6 @@ export const updateBooking = async (req, res) => {
   } catch (error) {
     logger.error('Update booking error:', {
       error: error.message,
-      stack: error.stack,
       bookingId: req.params.id
     });
     res.status(500).json({
@@ -491,13 +411,9 @@ export const deleteBooking = async (req, res) => {
       });
     }
 
-    // FIXED: Consistent authorization logic
     const bookingUserId = booking.pelanggan;
-    
     const isOwner = bookingUserId.toString() === userId.toString();
-    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
-
-    // FIXED: Kasir dan Admin bisa akses SEMUA booking
+    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
     const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
@@ -507,7 +423,6 @@ export const deleteBooking = async (req, res) => {
       });
     }
 
-    // Check if booking can be deleted (not completed or paid)
     if (booking.status_pemesanan === 'completed') {
       return res.status(400).json({
         status: 'error',
@@ -532,7 +447,6 @@ export const deleteBooking = async (req, res) => {
   } catch (error) {
     logger.error('Delete booking error:', {
       error: error.message,
-      stack: error.stack,
       bookingId: req.params.id
     });
     res.status(500).json({
@@ -541,7 +455,6 @@ export const deleteBooking = async (req, res) => {
     });
   }
 };
-
 
 export const getBookingStatus = async (req, res) => {
   try {
@@ -570,7 +483,6 @@ export const getBookingStatus = async (req, res) => {
   }
 };
 
-
 export const getBookingStatusSummary = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -596,7 +508,6 @@ export const getBookingStatusSummary = async (req, res) => {
   }
 };
 
-
 export const getAllBookingsForCashier = async (req, res) => {
   try {
     const filters = {
@@ -610,7 +521,6 @@ export const getAllBookingsForCashier = async (req, res) => {
 
     const data = await BookingAnalyticsService.getAllBookingsForCashier(filters);
 
-    // Log activity
     logger.info(`Kasir ${req.user.email} viewed all bookings`, {
       role: req.user.role,
       filters: filters,
@@ -638,7 +548,6 @@ export const getAllBookingsForCashier = async (req, res) => {
     });
   }
 };
-
 
 export const getAllBookings = async (req, res) => {
   try {
@@ -681,112 +590,6 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
-
+export const getUserBookings = getMyBookings;
 export const getBookings = getAllBookings;
 export const getCashierBookings = getAllBookingsForCashier;
-
-// Tambahkan di bookingController.js untuk debug schema
-export const debugBookingSchema = async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const booking = await Booking.findById(id);
-    
-    if (!booking) {
-      return res.json({
-        status: 'debug',
-        message: 'Booking not found',
-        bookingId: id
-      });
-    }
-
-    const bookingObj = booking.toObject();
-    
-    res.json({
-      status: 'debug',
-      message: 'Booking schema analysis',
-      data: {
-        bookingId: id,
-        availableFields: Object.keys(bookingObj),
-        userField: {
-          user_id: bookingObj.user_id || 'not found',
-          userId: bookingObj.userId || 'not found'
-        },
-        fieldField: {
-          lapangan_id: bookingObj.lapangan_id || 'not found',
-          lapanganId: bookingObj.lapanganId || 'not found'
-        },
-        rawBooking: bookingObj
-      }
-    });
-
-  } catch (error) {
-    res.json({
-      status: 'debug_error',
-      message: error.message,
-      stack: error.stack
-    });
-  }
-};
-
-// Add this to bookingController.js untuk debug access
-export const debugBookingAccess = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-    const userRole = req.user.role;
-
-    const booking = await Booking.findById(id);
-    
-    if (!booking) {
-      return res.json({
-        status: 'debug',
-        message: 'Booking not found',
-        bookingId: id,
-        requestUser: {
-          id: userId.toString(),
-          role: userRole
-        }
-      });
-    }
-
-    const bookingUserId = booking.pelanggan;
-    const isOwner = bookingUserId && bookingUserId.toString() === userId.toString();
-    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
-
-    res.json({
-      status: 'debug',
-      message: 'Booking access debug info',
-      data: {
-        bookingId: id,
-        requestUser: {
-          id: userId.toString(),
-          role: userRole
-        },
-        booking: {
-          pelanggan: bookingUserId?.toString() || 'null',
-          kasir: booking.kasir?.toString() || 'null',
-          status: booking.status_pemesanan,
-          payment: booking.payment_status
-        },
-        accessCheck: {
-          isOwner,
-          isCashierRole: userRole === 'kasir',
-          isAdminRole: userRole === 'admin', 
-          isCashierOrAdmin,
-          hasAccess: isOwner || isCashierOrAdmin
-        }
-      }
-    });
-
-  } catch (error) {
-    res.json({
-      status: 'debug_error',
-      message: error.message,
-      requestUser: {
-        id: req.user?._id?.toString(),
-        role: req.user?.role
-      }
-    });
-  }
-};

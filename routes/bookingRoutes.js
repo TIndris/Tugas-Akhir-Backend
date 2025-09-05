@@ -10,9 +10,7 @@ import {
   checkAvailability,
   getAvailability,
   getBookingStatus,
-  getBookingStatusSummary,
-  debugBookingSchema,
-  debugBookingAccess
+  getBookingStatusSummary
 } from '../controllers/bookingController.js';
 import { authenticateToken, requireCashierOrAdmin } from '../middleware/auth.js';
 
@@ -39,7 +37,5 @@ router.get('/:id/status', getBookingStatus);
 router.get('/:id', getBookingById);
 router.patch('/:id', updateBooking);
 router.delete('/:id', deleteBooking);
-router.get('/debug-schema/:id', authenticateToken, debugBookingSchema);
-router.get('/debug-access/:id', authenticateToken, debugBookingAccess);
 
 export default router;
