@@ -123,6 +123,8 @@ export const getAvailability = async (req, res) => {
   }
 };
 
+export const checkAvailability = getAvailability;
+
 export const getMyBookings = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -861,5 +863,7 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
-// ALIAS EXPORTS ONLY - NO DUPLICATES
-export const checkAvailability = getAvailability;
+// FINAL EXPORTS - NO DUPLICATES
+export const getUserBookings = getMyBookings;
+export const getBookings = getAllBookings;
+export const getCashierBookings = getAllBookingsForCashier;

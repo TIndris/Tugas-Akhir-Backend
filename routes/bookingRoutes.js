@@ -31,11 +31,11 @@ router.get('/admin/all', requireCashierOrAdmin, getAllBookings);
 
 // CUSTOMER ROUTES (and accessible by admin/cashier)
 router.post('/', createBooking);
-router.get('/my-bookings', getMyBookings); // All active bookings (cancelled are deleted)
+router.get('/my-bookings', getMyBookings);
 router.get('/status-summary', getBookingStatusSummary);
 
 // CUSTOMER SPECIFIC ROUTES
-router.patch('/:id/cancel', cancelBooking); // Now deletes from database
+router.patch('/:id/cancel', cancelBooking);
 router.patch('/:id/update', updateBookingByCustomer);
 
 // GENERAL ROUTES (accessible by owner or admin/cashier)
