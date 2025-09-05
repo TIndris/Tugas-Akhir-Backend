@@ -187,6 +187,7 @@ export const getBookingById = async (req, res) => {
 
     // Fix: Gunakan field yang benar berdasarkan schema
     const bookingUserId = booking.pelanggan;
+    const bookingKasirId = booking.kasir; // Add kasir field check
     
     if (!bookingUserId) {
       logger.error('Booking pelanggan field not found', {
@@ -200,11 +201,27 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    // Authorization check
+    // Enhanced Authorization check
     const isOwner = bookingUserId.toString() === userId.toString();
+    const isAssignedKasir = bookingKasirId && bookingKasirId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
-    if (!isOwner && !isCashierOrAdmin) {
+    // Allow access if: owner, assigned kasir, or any kasir/admin
+    const hasAccess = isOwner || isAssignedKasir || isCashierOrAdmin;
+
+    logger.info('Booking access check', {
+      bookingId: id,
+      userId: userId.toString(),
+      userRole,
+      bookingUserId: bookingUserId.toString(),
+      bookingKasirId: bookingKasirId?.toString() || 'none',
+      isOwner,
+      isAssignedKasir,
+      isCashierOrAdmin,
+      hasAccess
+    });
+
+    if (!hasAccess) {
       return res.status(403).json({
         status: 'error',
         message: 'Anda tidak memiliki akses ke booking ini'
@@ -220,6 +237,14 @@ export const getBookingById = async (req, res) => {
       const user = await User.findById(bookingUserId).select('name email phone');
       if (user) {
         populatedBooking.pelanggan_detail = user;
+      }
+
+      // Populate kasir jika ada
+      if (bookingKasirId) {
+        const kasir = await User.findById(bookingKasirId).select('name email');
+        if (kasir) {
+          populatedBooking.kasir_detail = kasir;
+        }
       }
 
       // Populate lapangan (field)
@@ -245,6 +270,7 @@ export const getBookingById = async (req, res) => {
         booking: {
           id: booking._id,
           pelanggan: populatedBooking.pelanggan_detail || booking.pelanggan,
+          kasir: populatedBooking.kasir_detail || booking.kasir,
           lapangan: populatedBooking.lapangan_detail || booking.lapangan,
           jenis_lapangan: booking.jenis_lapangan,
           tanggal_booking: booking.tanggal_booking,
@@ -254,7 +280,6 @@ export const getBookingById = async (req, res) => {
           status_pemesanan: booking.status_pemesanan,
           payment_status: booking.payment_status,
           payment_deadline: booking.payment_deadline,
-          kasir: booking.kasir,
           konfirmasi_at: booking.konfirmasi_at,
           createdAt: booking.createdAt,
           updatedAt: booking.updatedAt
@@ -302,14 +327,17 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    // Fix: Gunakan field yang benar
+    // Enhanced authorization check
     const bookingUserId = booking.pelanggan;
+    const bookingKasirId = booking.kasir;
     
-    // Authorization check
     const isOwner = bookingUserId.toString() === userId.toString();
+    const isAssignedKasir = bookingKasirId && bookingKasirId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
-    if (!isOwner && !isCashierOrAdmin) {
+    const hasAccess = isOwner || isAssignedKasir || isCashierOrAdmin;
+
+    if (!hasAccess) {
       return res.status(403).json({
         status: 'error',
         message: 'Anda tidak memiliki akses untuk mengubah booking ini'
@@ -384,14 +412,17 @@ export const deleteBooking = async (req, res) => {
       });
     }
 
-    // Fix: Gunakan field yang benar
+    // Enhanced authorization check
     const bookingUserId = booking.pelanggan;
-
-    // Authorization check
+    const bookingKasirId = booking.kasir;
+    
     const isOwner = bookingUserId.toString() === userId.toString();
+    const isAssignedKasir = bookingKasirId && bookingKasirId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
-    if (!isOwner && !isCashierOrAdmin) {
+    const hasAccess = isOwner || isAssignedKasir || isCashierOrAdmin;
+
+    if (!hasAccess) {
       return res.status(403).json({
         status: 'error',
         message: 'Anda tidak memiliki akses untuk menghapus booking ini'
