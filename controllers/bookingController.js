@@ -177,8 +177,8 @@ export const getBookingById = async (req, res) => {
     }
 
     const booking = await Booking.findById(id)
-      .populate('user_id', 'name email phone')
-      .populate('lapangan_id', 'nama harga gambar');
+      .populate('userId', 'name email phone')
+      .populate('lapanganId', 'nama harga gambar');
 
     if (!booking) {
       return res.status(404).json({
@@ -187,7 +187,7 @@ export const getBookingById = async (req, res) => {
       });
     }
 
-    const isOwner = booking.user_id._id.toString() === userId.toString();
+    const isOwner = booking.userId._id.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
 
     if (!isOwner && !isCashierOrAdmin) {
@@ -203,14 +203,14 @@ export const getBookingById = async (req, res) => {
       data: {
         booking: {
           id: booking._id,
-          user_id: booking.user_id,
-          lapangan_id: booking.lapangan_id,
-          tanggal_booking: booking.tanggal_booking,
-          jam_booking: booking.jam_booking,
+          userId: booking.userId,
+          lapanganId: booking.lapanganId,
+          tanggalBooking: booking.tanggalBooking,
+          jamBooking: booking.jamBooking,
           durasi: booking.durasi,
-          total_harga: booking.total_harga,
+          totalHarga: booking.totalHarga,
           status: booking.status,
-          payment_status: booking.payment_status,
+          paymentStatus: booking.paymentStatus,
           catatan: booking.catatan,
           createdAt: booking.createdAt,
           updatedAt: booking.updatedAt
