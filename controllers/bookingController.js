@@ -123,19 +123,15 @@ export const getAvailability = async (req, res) => {
   }
 };
 
-export const checkAvailability = getAvailability;
-
 export const getMyBookings = async (req, res) => {
   try {
     const userId = req.user._id;
     
-    // Get all user bookings (cancelled ones are already deleted)
     const bookings = await Booking.find({ pelanggan: userId })
       .populate('lapangan', 'nama jenis_lapangan harga gambar jam_buka jam_tutup status')
       .sort({ createdAt: -1 })
       .lean();
 
-    // Format response
     const formattedBookings = bookings.map(booking => ({
       ...booking,
       lapangan: {
@@ -146,19 +142,11 @@ export const getMyBookings = async (req, res) => {
       }
     }));
 
-    // Group by status for summary
     const statusSummary = formattedBookings.reduce((acc, booking) => {
       const status = booking.status_pemesanan;
       acc[status] = (acc[status] || 0) + 1;
       return acc;
     }, {});
-
-    logger.info('User bookings retrieved', {
-      userId: userId.toString(),
-      totalBookings: formattedBookings.length,
-      statusBreakdown: statusSummary,
-      action: 'GET_MY_BOOKINGS'
-    });
 
     res.status(200).json({
       status: 'success',
@@ -209,8 +197,6 @@ export const getBookingById = async (req, res) => {
     }
 
     const bookingUserId = booking.pelanggan;
-    
-    // FIXED: Support both 'kasir' and 'cashier' roles
     const isOwner = bookingUserId && bookingUserId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
     const hasAccess = isOwner || isCashierOrAdmin;
@@ -283,11 +269,6 @@ export const getBookingById = async (req, res) => {
       };
 
     } catch (populateError) {
-      logger.error('Populate error in getBookingById', {
-        error: populateError.message,
-        bookingId: id
-      });
-      
       populatedBooking = {
         id: booking._id,
         customer: { 
@@ -397,13 +378,6 @@ export const updateBooking = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    logger.info('Booking updated', {
-      bookingId: id,
-      updatedBy: userId,
-      userRole,
-      action: 'UPDATE_BOOKING'
-    });
-
     res.status(200).json({
       status: 'success',
       message: 'Booking berhasil diperbarui',
@@ -428,7 +402,6 @@ export const updateBookingByCustomer = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
-    const userRole = req.user.role;
     const updateData = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -447,7 +420,6 @@ export const updateBookingByCustomer = async (req, res) => {
       });
     }
 
-    // Only booking owner can update their booking
     const bookingUserId = booking.pelanggan;
     const isOwner = bookingUserId.toString() === userId.toString();
 
@@ -458,7 +430,6 @@ export const updateBookingByCustomer = async (req, res) => {
       });
     }
 
-    // Check if booking can be updated by customer
     const canUpdateStatuses = ['pending', 'waiting_payment'];
     const canUpdatePaymentStatuses = ['no_payment', 'pending_verification'];
 
@@ -476,30 +447,23 @@ export const updateBookingByCustomer = async (req, res) => {
       });
     }
 
-    // ENHANCED: Customer can update more fields including schedule
     const allowedFields = ['catatan', 'special_request', 'tanggal_booking', 'jam_booking', 'durasi'];
     const filteredData = {};
     
-    // Check if rescheduling (changing date, time, or duration)
     const isRescheduling = updateData.tanggal_booking || updateData.jam_booking || updateData.durasi;
     
     if (isRescheduling) {
-      // Validate new schedule if provided
       const newDate = updateData.tanggal_booking || booking.tanggal_booking;
       const newTime = updateData.jam_booking || booking.jam_booking;
       const newDuration = updateData.durasi || booking.durasi;
       
-      // FIXED: Import BookingService properly
       try {
-        const BookingService = (await import('../services/bookingService.js')).default;
-        
-        // Check if new slot is available (excluding current booking)
         const isAvailable = await BookingService.checkSlotAvailability(
           booking.lapangan,
           newDate,
           newTime,
           newDuration,
-          id // Exclude current booking from conflict check
+          id
         );
         
         if (!isAvailable) {
@@ -510,19 +474,12 @@ export const updateBookingByCustomer = async (req, res) => {
           });
         }
       } catch (availabilityError) {
-        logger.error('Availability check error during reschedule:', {
-          error: availabilityError.message,
-          bookingId: id,
-          newSchedule: { newDate, newTime, newDuration }
-        });
-        
         return res.status(400).json({
           status: 'error',
           message: 'Gagal memvalidasi jadwal baru: ' + availabilityError.message
         });
       }
       
-      // Recalculate price if duration changed
       if (updateData.durasi && updateData.durasi !== booking.durasi) {
         try {
           const Field = mongoose.model('Field');
@@ -540,7 +497,6 @@ export const updateBookingByCustomer = async (req, res) => {
       }
     }
     
-    // Filter allowed fields
     allowedFields.forEach(field => {
       if (updateData[field] !== undefined) {
         filteredData[field] = updateData[field];
@@ -554,7 +510,6 @@ export const updateBookingByCustomer = async (req, res) => {
       });
     }
 
-    // Add metadata
     filteredData.updatedAt = new Date();
     if (isRescheduling) {
       filteredData.rescheduled_at = new Date();
@@ -567,10 +522,8 @@ export const updateBookingByCustomer = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // Invalidate cache if rescheduling
     if (isRescheduling) {
       try {
-        const CacheService = (await import('../services/cacheService.js')).default;
         await CacheService.invalidateBookingCache(userId, booking.lapangan, booking.tanggal_booking);
         await CacheService.invalidateBookingCache(userId, booking.lapangan, filteredData.tanggal_booking || booking.tanggal_booking);
       } catch (cacheError) {
@@ -580,14 +533,6 @@ export const updateBookingByCustomer = async (req, res) => {
         });
       }
     }
-
-    logger.info('Booking updated by customer', {
-      bookingId: id,
-      updatedBy: userId.toString(),
-      updates: filteredData,
-      isRescheduling,
-      action: 'CUSTOMER_UPDATE_BOOKING'
-    });
 
     res.status(200).json({
       status: 'success',
@@ -615,7 +560,6 @@ export const updateBookingByCustomer = async (req, res) => {
       stack: error.stack
     });
 
-    // Better error messages for validation errors
     if (error.name === 'ValidationError') {
       const validationErrors = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
@@ -627,8 +571,7 @@ export const updateBookingByCustomer = async (req, res) => {
 
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat memperbarui booking',
-      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Terjadi kesalahan saat memperbarui booking'
     });
   }
 };
@@ -656,7 +599,6 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    // Authorization check
     const bookingUserId = booking.pelanggan;
     const isOwner = bookingUserId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
@@ -669,7 +611,6 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    // Check if booking can be cancelled
     const canCancelStatuses = ['pending', 'waiting_payment', 'dp_required'];
     const canCancelPaymentStatuses = ['no_payment', 'pending_verification', 'expired'];
 
@@ -687,7 +628,6 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    // Check deadline (customer can only cancel before deadline)
     if (userRole === 'customer' && booking.payment_deadline) {
       const now = new Date();
       const deadline = new Date(booking.payment_deadline);
@@ -700,12 +640,9 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    // Delete booking from database
     await Booking.findByIdAndDelete(id);
 
-    // Invalidate cache
     try {
-      const CacheService = (await import('../services/cacheService.js')).default;
       await CacheService.invalidateBookingCache(bookingUserId, booking.lapangan, booking.tanggal_booking);
     } catch (cacheError) {
       logger.warn('Cache invalidation failed during booking cancellation', {
@@ -713,18 +650,6 @@ export const cancelBooking = async (req, res) => {
         bookingId: id
       });
     }
-
-    logger.info('Booking cancelled and deleted', {
-      bookingId: id,
-      cancelledBy: userId.toString(),
-      userRole,
-      reason: cancel_reason || 'No reason provided',
-      originalStatus: {
-        booking: booking.status_pemesanan,
-        payment: booking.payment_status
-      },
-      action: 'CANCEL_DELETE_BOOKING'
-    });
 
     res.status(200).json({
       status: 'success',
@@ -751,20 +676,9 @@ export const cancelBooking = async (req, res) => {
       stack: error.stack
     });
 
-    // Better error messages for validation errors
-    if (error.name === 'ValidationError') {
-      const validationErrors = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({
-        status: 'error',
-        message: 'Data tidak valid: ' + validationErrors.join(', '),
-        validation_errors: validationErrors
-      });
-    }
-
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat membatalkan booking',
-      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: 'Terjadi kesalahan saat membatalkan booking'
     });
   }
 };
@@ -811,13 +725,6 @@ export const deleteBooking = async (req, res) => {
     }
 
     await Booking.findByIdAndDelete(id);
-
-    logger.info('Booking deleted', {
-      bookingId: id,
-      deletedBy: userId,
-      userRole,
-      action: 'DELETE_BOOKING'
-    });
 
     res.status(200).json({
       status: 'success',
@@ -901,14 +808,6 @@ export const getAllBookingsForCashier = async (req, res) => {
 
     const data = await BookingAnalyticsService.getAllBookingsForCashier(filters);
 
-    logger.info(`Kasir ${req.user.email} viewed all bookings`, {
-      role: req.user.role,
-      filters: filters,
-      search_term: filters.search || 'none',
-      total_results: data.bookings.length,
-      action: 'VIEW_ALL_BOOKINGS'
-    });
-
     res.status(200).json({
       status: 'success',
       message: 'Data booking berhasil diambil',
@@ -942,14 +841,6 @@ export const getAllBookings = async (req, res) => {
 
     const bookings = await BookingAnalyticsService.getAllBookingsForAdmin(filters);
 
-    logger.info(`Admin ${req.user.email} viewed all bookings`, {
-      role: req.user.role,
-      filters: filters,
-      search_term: filters.search || 'none',
-      total_results: bookings.length,
-      action: 'ADMIN_VIEW_ALL_BOOKINGS'
-    });
-
     res.status(200).json({
       status: 'success',
       results: bookings.length,
@@ -970,7 +861,5 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
-// CLEANED UP EXPORTS - Remove duplicates
-export const getUserBookings = getMyBookings;
-export const getBookings = getAllBookings;
-export const getCashierBookings = getAllBookingsForCashier;
+// ALIAS EXPORTS ONLY - NO DUPLICATES
+export const checkAvailability = getAvailability;
