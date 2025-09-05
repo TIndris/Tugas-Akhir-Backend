@@ -169,6 +169,14 @@ export const getBookingById = async (req, res) => {
     const userId = req.user._id;
     const userRole = req.user.role;
 
+    // Log untuk debugging
+    logger.info('Get booking by ID attempt', {
+      bookingId: id,
+      requestUserId: userId.toString(),
+      userRole,
+      action: 'GET_BOOKING_DETAIL'
+    });
+
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         status: 'error',
@@ -185,56 +193,99 @@ export const getBookingById = async (req, res) => {
       });
     }
 
+    // Debug booking data
+    logger.info('Booking found for access check', {
+      bookingId: id,
+      bookingData: {
+        pelanggan: booking.pelanggan?.toString() || 'null',
+        kasir: booking.kasir?.toString() || 'null',
+        status_pemesanan: booking.status_pemesanan,
+        payment_status: booking.payment_status
+      }
+    });
+
     const bookingUserId = booking.pelanggan;
     
-    if (!bookingUserId) {
-      return res.status(500).json({
-        status: 'error',
-        message: 'Data booking tidak valid'
-      });
-    }
+    // Enhanced authorization check dengan detailed logging
+    const isOwner = bookingUserId && bookingUserId.toString() === userId.toString();
+    const isCashierRole = userRole === 'kasir';
+    const isAdminRole = userRole === 'admin';
+    const isCashierOrAdmin = isCashierRole || isAdminRole;
 
-    // FIXED: Kasir dan Admin bisa akses SEMUA booking
-    const isOwner = bookingUserId.toString() === userId.toString();
-    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
+    // Log detailed access check
+    logger.info('Access control check', {
+      bookingId: id,
+      requestUserId: userId.toString(),
+      bookingUserId: bookingUserId?.toString() || 'null',
+      userRole,
+      checks: {
+        isOwner,
+        isCashierRole,
+        isAdminRole,
+        isCashierOrAdmin
+      }
+    });
+
+    // FIXED: Allow kasir and admin to access ALL bookings
     const hasAccess = isOwner || isCashierOrAdmin;
 
     if (!hasAccess) {
+      logger.warn('Access denied to booking', {
+        bookingId: id,
+        requestUserId: userId.toString(),
+        userRole,
+        reason: 'Insufficient permissions'
+      });
+      
       return res.status(403).json({
         status: 'error',
         message: 'Anda tidak memiliki akses ke booking ini'
       });
     }
 
-    // Manual populate dengan field yang benar
+    // Manual populate dengan error handling yang lebih baik
     let populatedBooking = {};
     
     try {
-      // Populate pelanggan (user) - DATA PENTING SAJA
       const User = mongoose.model('User');
-      const user = await User.findById(bookingUserId).select('name email phone');
-      
-      // Populate lapangan (field) - DATA PENTING SAJA
       const Field = mongoose.model('Field');
-      const field = await Field.findById(booking.lapangan).select('nama harga');
+
+      // Populate customer
+      let user = null;
+      if (bookingUserId) {
+        user = await User.findById(bookingUserId).select('name email phone');
+      }
       
-      // Populate kasir jika ada - DATA PENTING SAJA
+      // Populate field
+      let field = null;
+      if (booking.lapangan) {
+        field = await Field.findById(booking.lapangan).select('nama harga');
+      }
+      
+      // Populate kasir if exists
       let kasir = null;
       if (booking.kasir) {
         kasir = await User.findById(booking.kasir).select('name email');
       }
 
-      // RESPONSE SEDERHANA - HANYA DATA PENTING
+      // Build response
       populatedBooking = {
         id: booking._id,
-        customer: {
-          name: user?.name || 'Unknown',
-          email: user?.email || 'Unknown',
-          phone: user?.phone || 'Unknown'
+        customer: user ? {
+          name: user.name || 'Unknown',
+          email: user.email || 'Unknown',
+          phone: user.phone || 'Unknown'
+        } : {
+          name: 'Data not available',
+          email: 'Data not available',
+          phone: 'Data not available'
         },
-        field: {
-          name: field?.nama || 'Unknown',
-          price: field?.harga || 0
+        field: field ? {
+          name: field.nama || 'Unknown',
+          price: field.harga || 0
+        } : {
+          name: 'Data not available',
+          price: 0
         },
         kasir: kasir ? {
           name: kasir.name,
@@ -258,16 +309,24 @@ export const getBookingById = async (req, res) => {
       };
 
     } catch (populateError) {
-      logger.warn('Manual populate failed', {
+      logger.error('Populate error in getBookingById', {
         error: populateError.message,
-        bookingId: id
+        bookingId: id,
+        stack: populateError.stack
       });
       
-      // Fallback response jika populate gagal
+      // Fallback response
       populatedBooking = {
         id: booking._id,
-        customer: { name: 'Data not available' },
-        field: { name: 'Data not available' },
+        customer: { 
+          name: 'Data not available',
+          email: 'Data not available', 
+          phone: 'Data not available'
+        },
+        field: { 
+          name: 'Data not available',
+          price: 0
+        },
         kasir: null,
         booking_details: {
           date: booking.tanggal_booking,
@@ -287,6 +346,13 @@ export const getBookingById = async (req, res) => {
       };
     }
 
+    logger.info('Booking detail access successful', {
+      bookingId: id,
+      accessedBy: userId.toString(),
+      userRole,
+      accessType: isOwner ? 'owner' : 'staff'
+    });
+
     res.status(200).json({
       status: 'success',
       message: 'Detail booking berhasil diambil',
@@ -298,6 +364,7 @@ export const getBookingById = async (req, res) => {
   } catch (error) {
     logger.error('Get booking by ID error:', {
       error: error.message,
+      stack: error.stack,
       bookingId: req.params.id,
       userId: req.user?._id?.toString(),
       userRole: req.user?.role
@@ -658,6 +725,68 @@ export const debugBookingSchema = async (req, res) => {
       status: 'debug_error',
       message: error.message,
       stack: error.stack
+    });
+  }
+};
+
+// Add this to bookingController.js untuk debug access
+export const debugBookingAccess = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    const booking = await Booking.findById(id);
+    
+    if (!booking) {
+      return res.json({
+        status: 'debug',
+        message: 'Booking not found',
+        bookingId: id,
+        requestUser: {
+          id: userId.toString(),
+          role: userRole
+        }
+      });
+    }
+
+    const bookingUserId = booking.pelanggan;
+    const isOwner = bookingUserId && bookingUserId.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
+
+    res.json({
+      status: 'debug',
+      message: 'Booking access debug info',
+      data: {
+        bookingId: id,
+        requestUser: {
+          id: userId.toString(),
+          role: userRole
+        },
+        booking: {
+          pelanggan: bookingUserId?.toString() || 'null',
+          kasir: booking.kasir?.toString() || 'null',
+          status: booking.status_pemesanan,
+          payment: booking.payment_status
+        },
+        accessCheck: {
+          isOwner,
+          isCashierRole: userRole === 'kasir',
+          isAdminRole: userRole === 'admin', 
+          isCashierOrAdmin,
+          hasAccess: isOwner || isCashierOrAdmin
+        }
+      }
+    });
+
+  } catch (error) {
+    res.json({
+      status: 'debug_error',
+      message: error.message,
+      requestUser: {
+        id: req.user?._id?.toString(),
+        role: req.user?.role
+      }
     });
   }
 };
