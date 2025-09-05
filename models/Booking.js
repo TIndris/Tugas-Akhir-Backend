@@ -189,3 +189,58 @@ bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
 };
 
 export default mongoose.model('Booking', bookingSchema);
+
+export const getBookingById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    const isOwner = booking.userId.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
+
+    if (!isOwner && !isCashierOrAdmin) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses ke booking ini'
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Detail booking berhasil diambil',
+      data: {
+        booking
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get booking by ID error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id?.toString(),
+      userRole: req.user?.role
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil detail booking'
+    });
+  }
+};
