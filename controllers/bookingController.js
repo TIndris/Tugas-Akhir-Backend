@@ -454,8 +454,11 @@ export const updateBookingByCustomer = async (req, res) => {
       const newTime = updateData.jam_booking || booking.jam_booking;
       const newDuration = updateData.durasi || booking.durasi;
       
-      // Check if new slot is available (excluding current booking)
+      // FIXED: Import BookingService properly
       try {
+        const BookingService = (await import('../services/bookingService.js')).default;
+        
+        // Check if new slot is available (excluding current booking)
         const isAvailable = await BookingService.checkSlotAvailability(
           booking.lapangan,
           newDate,
@@ -532,6 +535,7 @@ export const updateBookingByCustomer = async (req, res) => {
     // Invalidate cache if rescheduling
     if (isRescheduling) {
       try {
+        const CacheService = (await import('../services/cacheService.js')).default;
         await CacheService.invalidateBookingCache(userId, booking.lapangan, booking.tanggal_booking);
         await CacheService.invalidateBookingCache(userId, booking.lapangan, filteredData.tanggal_booking || booking.tanggal_booking);
       } catch (cacheError) {
@@ -575,6 +579,16 @@ export const updateBookingByCustomer = async (req, res) => {
       userId: req.user?._id?.toString(),
       stack: error.stack
     });
+
+    // Better error messages for validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        status: 'error',
+        message: 'Data tidak valid: ' + validationErrors.join(', '),
+        validation_errors: validationErrors
+      });
+    }
 
     res.status(500).json({
       status: 'error',
@@ -856,10 +870,10 @@ export const cancelBooking = async (req, res) => {
       }
     }
 
-    // Update booking status to cancelled - FIXED: Remove fields that might not exist in schema
+    // FIXED: Use valid payment_status values from schema
     const updateData = {
       status_pemesanan: 'cancelled',
-      payment_status: 'cancelled',
+      payment_status: 'expired', // Use 'expired' instead of 'cancelled'
       updatedAt: new Date()
     };
 
@@ -874,8 +888,9 @@ export const cancelBooking = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    // Invalidate cache - FIXED: Add try-catch for cache invalidation
+    // Invalidate cache
     try {
+      const CacheService = (await import('../services/cacheService.js')).default;
       await CacheService.invalidateBookingCache(bookingUserId, booking.lapangan, booking.tanggal_booking);
     } catch (cacheError) {
       logger.warn('Cache invalidation failed during booking cancellation', {
@@ -892,6 +907,10 @@ export const cancelBooking = async (req, res) => {
       originalStatus: {
         booking: booking.status_pemesanan,
         payment: booking.payment_status
+      },
+      newStatus: {
+        booking: 'cancelled',
+        payment: 'expired'
       },
       action: 'CANCEL_BOOKING'
     });
@@ -918,6 +937,16 @@ export const cancelBooking = async (req, res) => {
       userRole: req.user?.role,
       stack: error.stack
     });
+
+    // Better error messages for validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        status: 'error',
+        message: 'Data tidak valid: ' + validationErrors.join(', '),
+        validation_errors: validationErrors
+      });
+    }
 
     res.status(500).json({
       status: 'error',

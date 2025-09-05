@@ -69,10 +69,14 @@ const bookingSchema = new mongoose.Schema({
   // Payment integration fields
   payment_status: {
     type: String,
-    enum: {
-      values: ['no_payment', 'pending_payment', 'dp_confirmed', 'fully_paid'],
-      message: 'Status pembayaran tidak valid'
-    },
+    enum: [
+      'no_payment',
+      'pending_verification', 
+      'dp_confirmed',
+      'fully_paid',
+      'expired',
+      'refunded' // Tambahkan ini jika perlu
+    ],
     default: 'no_payment'
   },
   payment_deadline: {
