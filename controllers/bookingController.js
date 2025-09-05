@@ -3,6 +3,8 @@ import BookingAnalyticsService from '../services/bookingAnalyticsService.js';
 import BookingStatusService from '../services/bookingStatusService.js';
 import CacheService from '../services/cacheService.js';
 import logger from '../config/logger.js';
+import mongoose from 'mongoose';
+import Booking from '../models/Booking.js'; // Assuming the Booking model is in models/Booking.js
 
 
 export const createBooking = async (req, res) => {
@@ -165,26 +167,50 @@ export const getBookingById = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
+    const userRole = req.user.role;
 
-    const booking = await BookingService.getBookingByIdForUser(id, userId);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id)
+      .populate('user_id', 'name email phone')
+      .populate('lapangan_id', 'nama_lapangan harga_per_jam gambar_lapangan');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Authorization check
+    const isOwner = booking.user_id._id.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
+
+    if (!isOwner && !isCashierOrAdmin) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses ke booking ini'
+      });
+    }
 
     res.status(200).json({
       status: 'success',
-      message: 'Booking berhasil diambil',
-      data: { booking }
+      message: 'Detail booking berhasil diambil',
+      data: {
+        booking: booking.toJSON()
+      }
     });
 
   } catch (error) {
-    logger.error(`Get booking by ID error: ${error.message}`, {
-      bookingId: req.params.id,
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
-    const statusCode = error.message.includes('tidak ditemukan') ? 404 : 400;
-    res.status(statusCode).json({
+    logger.error('Get booking by ID error:', error);
+    res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Terjadi kesalahan saat mengambil detail booking'
     });
   }
 };
@@ -194,33 +220,75 @@ export const updateBooking = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
+    const userRole = req.user.role;
+    let updateData = req.body;
 
-    const booking = await BookingService.updateBookingWithValidation(id, userId, req.body);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
 
-  
-    await CacheService.invalidateBookingCache(userId, booking.lapangan._id, booking.tanggal_booking);
+    const booking = await Booking.findById(id);
 
-    logger.info(`Booking updated: ${booking._id}`, {
-      user: userId,
-      changes: req.body
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Authorization check
+    const isOwner = booking.user_id.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
+
+    if (!isOwner && !isCashierOrAdmin) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses untuk mengubah booking ini'
+      });
+    }
+
+    // Restrict certain fields based on role
+    if (userRole === 'customer') {
+      const allowedFields = ['catatan'];
+      const filteredData = {};
+      allowedFields.forEach(field => {
+        if (updateData[field] !== undefined) {
+          filteredData[field] = updateData[field];
+        }
+      });
+      updateData = filteredData;
+    }
+
+    const updatedBooking = await Booking.findByIdAndUpdate(
+      id,
+      { ...updateData, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    ).populate('user_id', 'name email phone')
+     .populate('lapangan_id', 'nama_lapangan harga_per_jam');
+
+    logger.info('Booking updated', {
+      bookingId: id,
+      updatedBy: userId,
+      userRole,
+      action: 'UPDATE_BOOKING'
     });
 
     res.status(200).json({
       status: 'success',
       message: 'Booking berhasil diperbarui',
-      data: { booking }
+      data: {
+        booking: updatedBooking.toJSON()
+      }
     });
 
   } catch (error) {
-    logger.error(`Update booking error: ${error.message}`, {
-      bookingId: req.params.id,
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
+    logger.error('Update booking error:', error);
     res.status(500).json({
       status: 'error',
-      message: error.message
+      message: 'Terjadi kesalahan saat memperbarui booking'
     });
   }
 };
@@ -230,30 +298,59 @@ export const deleteBooking = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
+    const userRole = req.user.role;
 
-    const { booking, action } = await BookingService.deleteBookingWithPaymentCheck(id, userId);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
 
+    const booking = await Booking.findById(id);
 
-    await CacheService.invalidateBookingCache(userId, booking.lapangan._id, booking.tanggal_booking);
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
 
-    logger.info(`Booking ${action}: ${booking._id}`, {
-      user: userId,
-      reason: 'Customer cancellation'
+    // Authorization check
+    const isOwner = booking.user_id.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'admin'].includes(userRole);
+
+    if (!isOwner && !isCashierOrAdmin) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses untuk menghapus booking ini'
+      });
+    }
+
+    // Check if booking can be deleted (not completed or paid)
+    if (booking.status === 'completed') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking yang sudah selesai tidak dapat dihapus'
+      });
+    }
+
+    await Booking.findByIdAndDelete(id);
+
+    logger.info('Booking deleted', {
+      bookingId: id,
+      deletedBy: userId,
+      userRole,
+      action: 'DELETE_BOOKING'
     });
 
     res.status(200).json({
       status: 'success',
-      message: `Booking berhasil ${action === 'cancelled' ? 'dibatalkan' : 'dihapus'}`,
-      data: { booking }
+      message: 'Booking berhasil dihapus'
     });
 
   } catch (error) {
-    logger.error(`Delete booking error: ${error.message}`, {
-      bookingId: req.params.id,
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
+    logger.error('Delete booking error:', error);
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat menghapus booking'
