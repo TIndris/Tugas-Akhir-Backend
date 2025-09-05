@@ -9,17 +9,32 @@ import moment from 'moment-timezone';
 export const createPayment = async (req, res) => {
   try {
     console.log('=== PAYMENT CREATE DEBUG ===');
+    console.log('User:', req.user ? { id: req.user._id, role: req.user.role } : 'No user');
     console.log('Content-Type:', req.headers['content-type']);
-    console.log('Content-Length:', req.headers['content-length']);
-    console.log('Request body keys:', req.body ? Object.keys(req.body) : 'No body');
+    console.log('Request body:', req.body);
     console.log('Request file:', req.file ? {
       filename: req.file.filename,
       size: req.file.size,
       mimetype: req.file.mimetype
     } : 'No file');
-    console.log('User:', req.user?._id);
 
-   
+    // FIXED: Add role check
+    if (!req.user) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Authentication required'
+      });
+    }
+
+    if (req.user.role !== 'customer') {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Hanya customer yang dapat membuat pembayaran',
+        current_role: req.user.role
+      });
+    }
+
+    // Validate request body
     if (!req.body || Object.keys(req.body).length === 0) {
       return res.status(400).json({
         status: 'error',
@@ -29,7 +44,6 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    
     const { 
       booking_id, 
       payment_type, 
@@ -47,14 +61,28 @@ export const createPayment = async (req, res) => {
       transfer_date: transfer_date || 'missing'
     });
 
-    
+    // Validate required fields
+    if (!booking_id || !payment_type || !sender_name || !transfer_amount || !transfer_date) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Semua field wajib diisi',
+        missing_fields: {
+          booking_id: !booking_id ? 'ID booking harus diisi' : null,
+          payment_type: !payment_type ? 'Jenis pembayaran harus dipilih' : null,
+          sender_name: !sender_name ? 'Nama pengirim harus diisi' : null,
+          transfer_amount: !transfer_amount ? 'Jumlah transfer harus diisi' : null,
+          transfer_date: !transfer_date ? 'Tanggal transfer harus diisi' : null
+        }
+      });
+    }
+
+    // Validate transfer date
     const validateTransferDate = (dateString) => {
       try {
         if (!dateString || typeof dateString !== 'string') {
           throw new Error('Tanggal transfer harus diisi');
         }
 
-        // Parse YYYY-MM-DD format
         const [year, month, day] = dateString.split('-').map(num => parseInt(num));
         if (!year || !month || !day || year < 2020 || month < 1 || month > 12 || day < 1 || day > 31) {
           throw new Error('Format tanggal tidak valid (gunakan YYYY-MM-DD)');
@@ -87,29 +115,6 @@ export const createPayment = async (req, res) => {
       }
     };
 
-    
-    if (!booking_id || !payment_type || !sender_name || !transfer_amount || !transfer_date) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Semua field wajib diisi',
-        missing_fields: {
-          booking_id: !booking_id ? 'ID booking harus diisi' : null,
-          payment_type: !payment_type ? 'Jenis pembayaran harus dipilih' : null,
-          sender_name: !sender_name ? 'Nama pengirim harus diisi' : null,
-          transfer_amount: !transfer_amount ? 'Jumlah transfer harus diisi' : null,
-          transfer_date: !transfer_date ? 'Tanggal transfer harus diisi' : null
-        },
-        example: {
-          booking_id: "ObjectId dari booking",
-          payment_type: "dp_payment atau full_payment",
-          sender_name: "John Doe",
-          transfer_amount: "250000",
-          transfer_date: "2025-07-20"
-        }
-      });
-    }
-
-    
     let transferDateValid;
     try {
       transferDateValid = validateTransferDate(transfer_date);
@@ -117,12 +122,12 @@ export const createPayment = async (req, res) => {
       return res.status(400).json({
         status: 'error',
         message: dateError.message,
-        example_format: '2025-07-20',
+        example_format: '2025-09-05',
         received: transfer_date
       });
     }
 
-    
+    // Validate payment type
     const VALID_PAYMENT_TYPES = ['dp_payment', 'full_payment'];
     if (!VALID_PAYMENT_TYPES.includes(payment_type)) {
       return res.status(400).json({
@@ -133,7 +138,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    
+    // Validate booking ID
     if (!mongoose.Types.ObjectId.isValid(booking_id)) {
       return res.status(400).json({
         status: 'error',
@@ -142,6 +147,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
+    // Find and validate booking
     const booking = await Booking.findOne({
       _id: booking_id,
       pelanggan: req.user._id
@@ -156,7 +162,14 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    
+    console.log('Booking found:', {
+      id: booking._id,
+      status: booking.status_pemesanan,
+      payment_status: booking.payment_status,
+      harga: booking.harga
+    });
+
+    // Validate payment amount
     let paymentAmount;
     if (payment_type === 'dp_payment') {
       paymentAmount = 50000; // Fixed DP amount
@@ -180,7 +193,7 @@ export const createPayment = async (req, res) => {
       }
     }
 
-    
+    // Validate file upload
     if (!req.file) {
       return res.status(400).json({
         status: 'error',
@@ -190,17 +203,15 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    
-    let transferProofPath;
-    if (process.env.NODE_ENV === 'production') {
-      
-      transferProofPath = req.file.buffer ? 'memory-buffer-stored' : req.file.path;
-    } else {
-      
-      transferProofPath = req.file.path;
-    }
+    console.log('File upload details:', {
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      path: req.file.path
+    });
 
-    
+    // Check for existing active payment
     const existingPayment = await Payment.findOne({
       booking: booking_id,
       status: { $in: ['pending', 'verified'] }
@@ -219,7 +230,7 @@ export const createPayment = async (req, res) => {
       });
     }
 
-    
+    // Handle rejected payments
     const rejectedPayments = await Payment.find({
       booking: booking_id,
       status: 'rejected'
@@ -234,45 +245,35 @@ export const createPayment = async (req, res) => {
           replaced_by: req.user._id
         }
       );
+      console.log(`Replaced ${rejectedPayments.length} rejected payments`);
     }
 
-    
-    let bankDetails = null;
-    let availableBanks = [];
-    try {
-      bankDetails = await PaymentService.getBankDetails();
-      availableBanks = await PaymentService.getAllActiveBanks();
-    } catch (bankError) {
-      logger.warn('Bank details unavailable during payment creation:', bankError.message);
-    }
-
-    
+    // FIXED: Direct payment creation instead of service
     const paymentData = {
-      bookingId: booking_id,
-      userId: req.user._id,
-      paymentType: payment_type,
+      user: req.user._id,
+      booking: booking_id,
+      payment_type: payment_type,
       amount: paymentAmount,
-      transferProof: transferProofPath,
-      transferProofBuffer: req.file.buffer,
-      transferDetails: {
+      total_booking_amount: booking.harga,
+      transfer_proof: req.file.path,
+      transfer_details: {
         sender_name: sender_name.trim(),
         transfer_amount: parseInt(transfer_amount),
         transfer_date: transferDateValid,
         transfer_date_string: transfer_date,
         transfer_reference: transfer_reference || ''
-      }
+      },
+      status: 'pending'
     };
 
-    
-    const payment = await PaymentService.createPayment(paymentData);
-    
-    
-    const paymentSummary = PaymentService.calculatePaymentSummary(
-      payment.total_booking_amount, 
-      payment.payment_type
-    );
+    console.log('Creating payment with data:', paymentData);
 
-    
+    const payment = new Payment(paymentData);
+    await payment.save();
+
+    console.log('Payment created successfully:', payment._id);
+
+    // Clear cache
     try {
       if (client && client.isOpen) {
         await client.del('payments:pending');
@@ -280,10 +281,10 @@ export const createPayment = async (req, res) => {
         await client.del(`bookings:${req.user._id}`);
       }
     } catch (redisError) {
-      logger.warn('Redis cache clear error:', redisError);
+      console.warn('Redis cache clear error:', redisError);
     }
 
-    
+    // Log success
     logger.info(`Payment created successfully: ${payment._id}`, {
       user: req.user._id,
       booking: booking_id,
@@ -292,34 +293,40 @@ export const createPayment = async (req, res) => {
       replaced_rejected: rejectedPayments.length
     });
 
-    
+    // Get bank info for response
+    let bankDetails = null;
+    try {
+      if (PaymentService && PaymentService.getBankDetails) {
+        bankDetails = await PaymentService.getBankDetails();
+      }
+    } catch (bankError) {
+      console.warn('Bank details unavailable:', bankError.message);
+    }
+
+    // Response
     res.status(201).json({
       status: 'success',
       message: rejectedPayments.length > 0 
         ? 'Pembayaran baru berhasil diupload menggantikan yang sebelumnya ditolak'
-        : `Pembayaran ${payment.payment_type_text} berhasil dibuat. Menunggu verifikasi.`,
+        : `Pembayaran berhasil dibuat. Menunggu verifikasi.`,
       data: {
         payment: {
           _id: payment._id,
           booking: payment.booking,
           payment_type: payment.payment_type,
-          payment_type_text: payment.payment_type_text,
           amount: payment.amount,
           status: payment.status,
           transfer_details: {
             sender_name: payment.transfer_details.sender_name,
             transfer_amount: payment.transfer_details.transfer_amount,
-            transfer_date: transfer_date, 
+            transfer_date: transfer_date,
             transfer_date_display: moment(transferDateValid).format('DD MMMM YYYY'),
             transfer_reference: payment.transfer_details.transfer_reference
           },
           transfer_proof: payment.transfer_proof,
           submittedAtWIB: moment(payment.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
         },
-        payment_summary: paymentSummary,
         bank_details: bankDetails,
-        available_banks: availableBanks,
-        note: !bankDetails ? 'Info rekening tidak tersedia, silakan hubungi admin' : null,
         next_steps: [
           'Pembayaran Anda sedang diproses',
           'Tim kasir akan memverifikasi dalam 1x24 jam',
@@ -330,155 +337,121 @@ export const createPayment = async (req, res) => {
     });
 
   } catch (error) {
-    logger.error('Create payment error:', error);
+    console.error('=== PAYMENT CREATE ERROR ===');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Request details:', {
+      user: req.user ? { id: req.user._id, role: req.user.role } : 'No user',
+      body: req.body,
+      file: req.file ? 'File present' : 'No file',
+      contentType: req.headers['content-type']
+    });
+
+    logger.error('Create payment error:', {
+      error: error.message,
+      stack: error.stack,
+      user: req.user?._id,
+      body: req.body
+    });
     
     res.status(500).json({
       status: 'error',
-      message: 'Internal server error',
+      message: 'Terjadi kesalahan saat membuat pembayaran',
       error_code: 'PAYMENT_CREATE_ERROR',
       error_details: process.env.NODE_ENV === 'development' ? {
         message: error.message,
         stack: error.stack,
         request_info: {
           contentType: req.headers['content-type'],
-          contentLength: req.headers['content-length'],
           bodyKeys: req.body ? Object.keys(req.body) : 'No body',
-          hasFile: !!req.file
+          hasFile: !!req.file,
+          hasUser: !!req.user
         }
       } : 'Contact support'
     });
   }
 };
 
-
 export const approvePayment = async (req, res) => {
   try {
     const { paymentId } = req.params;
     const { notes } = req.body;
 
+    const payment = await Payment.findById(paymentId).populate('booking');
     
-    try {
-      const payment = await PaymentService.approvePayment(
-        paymentId,
-        req.user._id,
-        notes || 'Pembayaran disetujui oleh kasir'
-      );
-
-      
-      try {
-        if (client && client.isOpen) {
-          await client.del('payments:pending');
-          await client.del(`payments:user:${payment.user}`);
-        }
-      } catch (redisError) {
-        logger.warn('Redis cache clear error:', redisError);
-      }
-
-      const message = payment.previous_rejection_reason 
-        ? 'Pembayaran berhasil di-approve setelah review ulang'
-        : 'Pembayaran berhasil disetujui';
-
-      res.status(200).json({
-        status: 'success',
-        message: message,
-        data: { 
-          payment: {
-            id: payment._id,
-            status: payment.status,
-            amount: payment.amount,
-            payment_type: payment.payment_type_text,
-            approved_at: payment.verifiedAtWIB,
-            approved_by: req.user.name,
-            notes: payment.notes,
-            was_previously_rejected: !!payment.previous_rejection_reason
-          }
-        }
-      });
-
-    } catch (serviceError) {
-      
-      console.log('PaymentService failed, using direct logic:', serviceError.message);
-      
-      const payment = await Payment.findById(paymentId).populate('booking');
-      
-      if (!payment) {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Payment tidak ditemukan'
-        });
-      }
-
-      
-      if (!['pending', 'rejected'].includes(payment.status)) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Payment tidak bisa diapprove (status: ${payment.status})`
-        });
-      }
-
-      const booking = payment.booking;
-      if (!booking) {
-        return res.status(404).json({
-          status: 'error', 
-          message: 'Booking tidak ditemukan'
-        });
-      }
-
-      
-      payment.status = 'verified';
-      payment.verified_by = req.user._id;
-      payment.verified_at = new Date();
-      payment.notes = notes || 'Pembayaran disetujui';
-
-      
-      if (payment.rejection_reason) {
-        payment.previous_rejection_reason = payment.rejection_reason;
-        payment.rejection_reason = undefined;
-      }
-
-      
-      booking.status_pemesanan = 'confirmed';
-      booking.payment_status = payment.payment_type === 'full_payment' 
-        ? 'fully_paid' 
-        : 'dp_confirmed';
-      booking.kasir = req.user._id;
-      booking.konfirmasi_at = new Date();
-
-      
-      await payment.save();
-      await booking.save();
-
-      
-      try {
-        if (client && client.isOpen) {
-          await client.del('payments:pending');
-          await client.del(`payments:user:${payment.user}`);
-        }
-      } catch (redisError) {
-        logger.warn('Redis cache clear error:', redisError);
-      }
-
-      const message = payment.previous_rejection_reason 
-        ? 'Pembayaran berhasil di-approve setelah review ulang'
-        : 'Pembayaran berhasil disetujui';
-
-      res.status(200).json({
-        status: 'success',
-        message: message,
-        data: { 
-          payment: {
-            id: payment._id,
-            status: 'Terverifikasi',
-            amount: payment.amount,
-            payment_type: payment.payment_type_text || payment.payment_type,
-            approved_at: payment.verifiedAtWIB,
-            approved_by: req.user.name,
-            notes: payment.notes,
-            was_previously_rejected: !!payment.previous_rejection_reason
-          }
-        }
+    if (!payment) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Payment tidak ditemukan'
       });
     }
+
+    if (!['pending', 'rejected'].includes(payment.status)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Payment tidak bisa diapprove (status: ${payment.status})`
+      });
+    }
+
+    const booking = payment.booking;
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error', 
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Update payment
+    payment.status = 'verified';
+    payment.verified_by = req.user._id;
+    payment.verified_at = new Date();
+    payment.notes = notes || 'Pembayaran disetujui';
+
+    if (payment.rejection_reason) {
+      payment.previous_rejection_reason = payment.rejection_reason;
+      payment.rejection_reason = undefined;
+    }
+
+    // Update booking
+    booking.status_pemesanan = 'confirmed';
+    booking.payment_status = payment.payment_type === 'full_payment' 
+      ? 'fully_paid' 
+      : 'dp_confirmed';
+    booking.kasir = req.user._id;
+    booking.konfirmasi_at = new Date();
+
+    await payment.save();
+    await booking.save();
+
+    // Clear cache
+    try {
+      if (client && client.isOpen) {
+        await client.del('payments:pending');
+        await client.del(`payments:user:${payment.user}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    const message = payment.previous_rejection_reason 
+      ? 'Pembayaran berhasil di-approve setelah review ulang'
+      : 'Pembayaran berhasil disetujui';
+
+    res.status(200).json({
+      status: 'success',
+      message: message,
+      data: { 
+        payment: {
+          id: payment._id,
+          status: 'Terverifikasi',
+          amount: payment.amount,
+          payment_type: payment.payment_type,
+          approved_by: req.user.name,
+          notes: payment.notes,
+          was_previously_rejected: !!payment.previous_rejection_reason
+        }
+      }
+    });
 
   } catch (error) {
     logger.error(`Payment approval error: ${error.message}`, {
@@ -493,13 +466,8 @@ export const approvePayment = async (req, res) => {
   }
 };
 
-
 export const rejectPayment = async (req, res) => {
   try {
-    console.log('=== PAYMENT REJECTION DEBUG ===');
-    console.log('Payment ID:', req.params.paymentId || req.params.id);
-    console.log('Request body:', req.body);
-
     const paymentId = req.params.paymentId || req.params.id;
     const { reason, rejection_reason } = req.body;
     const finalReason = reason || rejection_reason;
@@ -511,91 +479,53 @@ export const rejectPayment = async (req, res) => {
       });
     }
 
+    const payment = await Payment.findById(paymentId).populate('booking');
     
-    if (PaymentService && PaymentService.rejectPayment) {
-      
-      const payment = await PaymentService.rejectPayment(
-        paymentId,
-        req.user._id,
-        finalReason.trim()
-      );
-
-      
-      try {
-        if (client && client.isOpen) {
-          await client.del('payments:pending');
-          await client.del(`payments:user:${payment.user}`);
-        }
-      } catch (redisError) {
-        logger.warn('Redis cache clear error:', redisError);
-      }
-
-      res.status(200).json({
-        status: 'success',
-        message: 'Pembayaran ditolak dan booking direset',
-        data: {
-          payment: {
-            id: payment._id,
-            status: 'Ditolak',
-            rejection_reason: payment.rejection_reason,
-            rejected_by: req.user.name,
-            rejected_at: payment.verifiedAtWIB
-          }
-        }
-      });
-
-    } else {
-      
-      const payment = await Payment.findById(paymentId).populate('booking');
-      
-      if (!payment) {
-        return res.status(404).json({
-          status: 'error',
-          message: 'Payment tidak ditemukan'
-        });
-      }
-
-      
-      payment.status = 'rejected';
-      payment.verified_by = req.user._id;
-      payment.verified_at = new Date();
-      payment.rejection_reason = finalReason.trim();
-
-      
-      const booking = payment.booking;
-      booking.status_pemesanan = 'pending';
-      booking.payment_status = 'no_payment';
-      booking.kasir = undefined;
-      booking.konfirmasi_at = undefined;
-
-    
-      await payment.save();
-      await booking.save();
-
-      
-      try {
-        if (client && client.isOpen) {
-          await client.del('payments:pending');
-          await client.del(`payments:user:${payment.user}`);
-        }
-      } catch (redisError) {
-        logger.warn('Redis cache clear error:', redisError);
-      }
-
-      res.status(200).json({
-        status: 'success',
-        message: 'Pembayaran ditolak dan booking direset',
-        data: {
-          payment: {
-            id: payment._id,
-            status: 'Ditolak',
-            rejection_reason: payment.rejection_reason,
-            rejected_by: req.user.name,
-            rejected_at: payment.verifiedAtWIB
-          }
-        }
+    if (!payment) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Payment tidak ditemukan'
       });
     }
+
+    // Update payment
+    payment.status = 'rejected';
+    payment.verified_by = req.user._id;
+    payment.verified_at = new Date();
+    payment.rejection_reason = finalReason.trim();
+
+    // Reset booking
+    const booking = payment.booking;
+    booking.status_pemesanan = 'pending';
+    booking.payment_status = 'no_payment';
+    booking.kasir = undefined;
+    booking.konfirmasi_at = undefined;
+
+    await payment.save();
+    await booking.save();
+
+    // Clear cache
+    try {
+      if (client && client.isOpen) {
+        await client.del('payments:pending');
+        await client.del(`payments:user:${payment.user}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Pembayaran ditolak dan booking direset',
+      data: {
+        payment: {
+          id: payment._id,
+          status: 'Ditolak',
+          rejection_reason: payment.rejection_reason,
+          rejected_by: req.user.name
+        }
+      }
+    });
 
   } catch (error) {
     console.error('Payment rejection error:', error);
@@ -608,27 +538,6 @@ export const rejectPayment = async (req, res) => {
 
 export const getPendingPayments = async (req, res) => {
   try {
-    const cacheKey = 'payments:pending';
-    
-    
-    let cachedPayments = null;
-    try {
-      if (client && client.isOpen) {
-        cachedPayments = await client.get(cacheKey);
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache read error:', redisError);
-    }
-
-    if (cachedPayments) {
-      const payments = JSON.parse(cachedPayments);
-      return res.json({
-        status: 'success',
-        results: payments.length,
-        data: { payments }
-      });
-    }
-
     const payments = await Payment.find({ 
       status: 'pending'
     })
@@ -641,15 +550,6 @@ export const getPendingPayments = async (req, res) => {
       }
     })
     .sort({ createdAt: -1 });
-
-    
-    try {
-      if (client && client.isOpen) {
-        await client.setEx(cacheKey, 120, JSON.stringify(payments));
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache save error:', redisError);
-    }
 
     res.status(200).json({
       status: 'success',
@@ -669,37 +569,17 @@ export const getPendingPayments = async (req, res) => {
 export const getUserPayments = async (req, res) => {
   try {
     const userId = req.user._id;
-    const cacheKey = `payments:user:${userId}`;
     
-    // Check cache first
-    let cachedPayments = null;
-    try {
-      if (client && client.isOpen) {
-        cachedPayments = await client.get(cacheKey);
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache read error:', redisError);
-    }
-
-    if (cachedPayments) {
-      const payments = JSON.parse(cachedPayments);
-      return res.json({
-        status: 'success',
-        results: payments.length,
-        data: { payments }
-      });
-    }
-
-    const payments = await PaymentService.getUserPayments(userId);
-
-    // Cache for 3 minutes
-    try {
-      if (client && client.isOpen) {
-        await client.setEx(cacheKey, 180, JSON.stringify(payments));
-      }
-    } catch (redisError) {
-      logger.warn('Redis cache save error:', redisError);
-    }
+    // Direct query instead of service
+    const payments = await Payment.find({ user: userId })
+      .populate({
+        path: 'booking',
+        populate: {
+          path: 'lapangan',
+          select: 'nama jenis_lapangan'
+        }
+      })
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       status: 'success',
@@ -719,7 +599,16 @@ export const getUserPayments = async (req, res) => {
 export const getPaymentById = async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const payment = await PaymentService.getPaymentById(paymentId);
+    
+    const payment = await Payment.findById(paymentId)
+      .populate('user', 'name email')
+      .populate({
+        path: 'booking',
+        populate: {
+          path: 'lapangan',
+          select: 'nama jenis_lapangan'
+        }
+      });
 
     if (!payment) {
       return res.status(404).json({
@@ -728,7 +617,7 @@ export const getPaymentById = async (req, res) => {
       });
     }
 
-    // Check authorization - user can only see their own payments
+    // Check authorization
     if (req.user.role === 'customer' && payment.user._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         status: 'error',
@@ -736,18 +625,9 @@ export const getPaymentById = async (req, res) => {
       });
     }
 
-    const paymentSummary = PaymentService.calculatePaymentSummary(
-      payment.total_booking_amount,
-      payment.payment_type
-    );
-
     res.status(200).json({
       status: 'success',
-      data: {
-        payment,
-        payment_summary: paymentSummary,
-        bank_details: PaymentService.getBankDetails()
-      }
+      data: { payment }
     });
 
   } catch (error) {
@@ -761,50 +641,31 @@ export const getPaymentById = async (req, res) => {
 
 export const getBankInfo = async (req, res) => {
   try {
-    
-    let bankDetails = null;
-    let availableBanks = [];
-    
-    try {
-      bankDetails = await PaymentService.getBankDetails();
-      availableBanks = await PaymentService.getAllActiveBanks();
-    } catch (bankError) {
-      logger.warn('Bank details unavailable:', bankError.message);
-      
-      // If no banks configured
-      if (bankError.message.includes('rekening bank')) {
-        return res.status(503).json({
-          status: 'error',
-          message: 'Sistem pembayaran sedang tidak tersedia',
-          error: {
-            code: 'NO_BANK_ACCOUNTS',
-            description: 'Admin belum mengonfigurasi rekening pembayaran'
-          }
-        });
-      }
-    }
+    // Simple bank info - adjust based on your needs
+    const bankInfo = {
+      bank_name: 'Bank BCA',
+      account_number: '1234567890',
+      account_name: 'DSC Sports Center',
+      payment_options: [
+        {
+          type: 'dp_payment',
+          name: 'Pembayaran DP',
+          amount: 50000,
+          description: 'DP tetap Rp 50.000'
+        },
+        {
+          type: 'full_payment',
+          name: 'Pembayaran Penuh',
+          amount: 'Sesuai total booking',
+          description: 'Bayar langsung sesuai total harga booking'
+        }
+      ]
+    };
     
     res.status(200).json({
       status: 'success',
       message: 'Informasi pembayaran',
-      data: {
-        primary_bank: bankDetails,
-        available_banks: availableBanks,
-        payment_options: [
-          {
-            type: 'dp_payment',
-            name: 'Pembayaran DP',
-            amount: PaymentService.DP_AMOUNT,
-            description: `DP tetap Rp ${PaymentService.DP_AMOUNT.toLocaleString('id-ID')}`
-          },
-          {
-            type: 'full_payment',
-            name: 'Pembayaran Penuh',
-            amount: 'Sesuai total booking',
-            description: 'Bayar langsung sesuai total harga booking'
-          }
-        ]
-      }
+      data: bankInfo
     });
 
   } catch (error) {
@@ -814,27 +675,4 @@ export const getBankInfo = async (req, res) => {
       message: 'Terjadi kesalahan saat mengambil informasi bank'
     });
   }
-};
-
-
-const formatDateDisplay = (dateString) => {
-  const date = new Date(dateString + 'T00:00:00.000Z');
-  return date.toLocaleDateString('id-ID', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-};
-
-const formatDateTimeWIB = (date) => {
-  return new Date(date).toLocaleString('id-ID', {
-    timeZone: 'Asia/Jakarta',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
 };

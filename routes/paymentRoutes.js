@@ -8,7 +8,7 @@ import {
   getPaymentById,
   getBankInfo
 } from '../controllers/paymentController.js';
-import { authenticateToken, restrictTo } from '../middleware/auth.js';
+import { authenticateToken, requireCashierOrAdmin } from '../middleware/auth.js';
 import { uploadPaymentProof } from '../middleware/upload.js'; 
 
 const router = express.Router();
@@ -19,14 +19,14 @@ router.get('/bank-info', getBankInfo);
 // Protect all other routes
 router.use(authenticateToken);
 
-// Customer routes
-router.post('/', uploadPaymentProof, restrictTo('customer'), createPayment);
-router.get('/my-payments', restrictTo('customer'), getUserPayments);
+// Customer routes - FIXED: remove restrictTo, use role check in controller
+router.post('/', uploadPaymentProof, createPayment);
+router.get('/my-payments', getUserPayments);
 
-// Kasir routes
-router.get('/pending', restrictTo('cashier', 'admin'), getPendingPayments);
-router.patch('/:paymentId/approve', restrictTo('cashier', 'admin'), approvePayment);
-router.patch('/:paymentId/reject', restrictTo('cashier', 'admin'), rejectPayment);
+// Kasir routes - FIXED: use requireCashierOrAdmin instead of restrictTo
+router.get('/pending', requireCashierOrAdmin, getPendingPayments);
+router.patch('/:paymentId/approve', requireCashierOrAdmin, approvePayment);
+router.patch('/:paymentId/reject', requireCashierOrAdmin, rejectPayment);
 
 // Shared routes
 router.get('/:paymentId', getPaymentById);
