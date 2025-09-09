@@ -6,7 +6,6 @@ import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import moment from 'moment-timezone';
 import session from 'express-session';
-import MongoStore from 'connect-mongo';  // ADD: Missing import for session store
 import passport from './config/passport.js';
 
 // Import configurations
