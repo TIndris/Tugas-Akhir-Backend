@@ -1,164 +1,101 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import moment from 'moment-timezone';
-import {
-  validateUserEmail,
-  validateUserName,
-  validateUserPassword,
-  validateUserRoleField,
-  validateAdminCashierCreation,
-  validateEmail,
-  validatePictureUrl,
-  USER_ROLES
-} from '../validators/userValidators.js';
 
 const userSchema = new mongoose.Schema({
-  googleId: {
-    type: String,
-    unique: true,
-    sparse: true
-  },
   name: {
     type: String,
-    required: [true, 'Nama harus diisi'],
-    trim: true
+    required: [true, 'Nama wajib diisi'],
+    trim: true,
+    minlength: [2, 'Nama minimal 2 karakter'],
+    maxlength: [50, 'Nama maksimal 50 karakter']
   },
   email: {
     type: String,
-    required: [true, 'Email harus diisi'],
+    required: [true, 'Email wajib diisi'],
     unique: true,
     lowercase: true,
-    validate: {
-      validator: validateEmail,
-      message: 'Format email tidak valid'
-    }
-  },
-  
-  phone: {
-    type: String,
     trim: true,
-    validate: {
-      validator: function(phone) {
-        if (!phone) return true; // Optional field
-        return /^(\+62|62|0)8[1-9][0-9]{6,9}$/.test(phone);
-      },
-      message: 'Format nomor telepon tidak valid (08xxxxxxxxx)'
-    }
+    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Format email tidak valid']
   },
   password: {
     type: String,
-    select: false,
-    required: function() {
-      return !this.googleId; // Password tidak required jika ada googleId
-    }
+    minlength: [6, 'Password minimal 6 karakter'],
+    select: false // Hide by default
   },
   role: {
     type: String,
-    enum: {
-      values: USER_ROLES,
-      message: 'Role tidak valid'
-    },
+    enum: ['customer', 'cashier', 'admin'],
     default: 'customer'
   },
-  picture: {
+  // ✅ REMOVED: picture field completely
+  phone: {
     type: String,
-    validate: {
-      validator: validatePictureUrl,
-      message: 'URL gambar tidak valid'
-    }
+    match: [/^(\+62|62|0)[0-9]{8,13}$/, 'Format nomor telepon tidak valid']
   },
-  isEmailVerified: {
-    type: Boolean,
-    default: false
-  },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+  // ✅ Google OAuth fields
+  googleId: {
+    type: String,
+    sparse: true // Allow multiple null values
   },
   authProvider: {
     type: String,
     enum: ['local', 'google'],
     default: 'local'
   },
+  isEmailVerified: {
+    type: Boolean,
+    default: false
+  },
   lastLogin: {
-    type: Date
+    type: Date,
+    default: Date.now
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
-}, { 
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
 });
 
-// Virtual fields untuk format Indonesia
-userSchema.virtual('createdAtWIB').get(function() {
-  return moment(this.createdAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
-});
-
-userSchema.virtual('updatedAtWIB').get(function() {
-  return moment(this.updatedAt).tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss');
-});
-
-// Prevent Google OAuth users from being admin/cashier
-userSchema.pre('save', function(next) {
-  if (this.googleId && ['admin', 'cashier'].includes(this.role)) {
-    throw new Error('OAuth users can only be customers');
-  }
-  next();
-});
-
-// Hash password before saving
+// ✅ Pre-save middleware
 userSchema.pre('save', async function(next) {
-  // Skip jika password tidak dimodifikasi
-  if (!this.isModified('password')) return next();
-  
-  // Skip jika Google user tanpa password
-  if (this.googleId && !this.password) return next();
-  
-  // Hash password jika ada
-  if (this.password) {
-    this.password = await bcrypt.hash(this.password, 12);
+  try {
+    // Update timestamp
+    this.updatedAt = new Date();
+
+    // Only hash password if it's modified and exists
+    if (!this.isModified('password') || !this.password) {
+      return next();
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(12);
+    this.password = await bcrypt.hash(this.password, salt);
+    
+    next();
+  } catch (error) {
+    next(error);
   }
-  
-  next();
 });
 
-// Method to check password
+// ✅ Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
   if (!this.password) {
-    throw new Error('User does not have a password');
+    return false; // No password set (Google user)
   }
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Helper methods untuk Google OAuth
-userSchema.methods.isGoogleUser = function() {
-  return !!this.googleId;
-};
-
-userSchema.methods.canLoginWithPassword = function() {
-  return !!this.password;
-};
-
-// Pre-save validations
-userSchema.pre('save', validateUserEmail);
-userSchema.pre('save', validateUserName);
-
-// Password validation - skip untuk Google users
-userSchema.pre('save', function(next) {
-  // Skip password validation untuk Google users
-  if (this.googleId && !this.password) {
-    return next();
+// ✅ JSON transform to hide sensitive fields
+userSchema.set('toJSON', {
+  transform: function(doc, ret) {
+    delete ret.password;
+    delete ret.__v;
+    return ret;
   }
-  // Jalankan validasi password normal
-  return validateUserPassword.call(this, next);
 });
-
-userSchema.pre('save', validateUserRoleField);
-userSchema.pre('save', validateAdminCashierCreation);
-
-// Index untuk performance
-userSchema.index({ role: 1 });
-userSchema.index({ googleId: 1 });
-userSchema.index({ authProvider: 1 });
 
 export default mongoose.model('User', userSchema);

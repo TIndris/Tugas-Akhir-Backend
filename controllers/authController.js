@@ -158,7 +158,6 @@ export const login = async (req, res) => {
           email: user.email,
           role: user.role,
           authProvider: user.authProvider || 'local',
-          picture: user.picture,
           isEmailVerified: user.isEmailVerified,
           lastLogin: user.lastLogin
         }
@@ -287,7 +286,6 @@ export const refreshToken = async (req, res) => {
           email: user.email,
           role: user.role,
           authProvider: user.authProvider,
-          picture: user.picture,
           isEmailVerified: user.isEmailVerified
         }
       }

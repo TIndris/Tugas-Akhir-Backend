@@ -260,7 +260,6 @@ app.get('/', (req, res) => {
         '✅ JWT authentication for all users',
         '✅ Multi-role support (customer/kasir/admin)',
         '✅ Redis caching & session management',
-        '✅ Form Data Support - File uploads enabled',
         '✅ Cross-origin cookie support',
         '✅ Comprehensive error handling'
       ]

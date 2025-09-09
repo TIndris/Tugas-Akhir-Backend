@@ -5,48 +5,29 @@ import { ProfileService } from '../services/profileService.js';
 
 export const getProfile = async (req, res) => {
   try {
+    const user = req.user;
     
-    const user = await User.findById(req.user._id).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User tidak ditemukan'
-      });
-    }
-
-    logger.info(`Profile accessed: ${user._id}`, {
-      email: user.email,
-      action: 'GET_PROFILE'
-    });
-
     res.status(200).json({
       status: 'success',
-      message: 'Profile berhasil diambil',
       data: {
         user: {
           id: user._id,
           name: user.name,
           email: user.email,
-          phone: user.phone || null,
-          picture: user.picture || null,
+          phone: user.phone,
           role: user.role,
+          authProvider: user.authProvider,
           isEmailVerified: user.isEmailVerified,
-          createdAt: user.createdAtWIB,
-          updatedAt: user.updatedAtWIB
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt
         }
       }
     });
-
   } catch (error) {
-    logger.error(`Get profile error: ${error.message}`, {
-      userId: req.user?._id,
-      action: 'GET_PROFILE_ERROR'
-    });
-    
+    logger.error('Get profile error:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat mengambil profile'
+      message: 'Error getting profile'
     });
   }
 };
@@ -54,105 +35,70 @@ export const getProfile = async (req, res) => {
 
 export const updateProfile = async (req, res) => {
   try {
-    const { name, email, phone } = req.body;
+    const { name, phone } = req.body;
     const userId = req.user._id;
 
-    logger.info(`Profile update attempt: ${userId}`, {
-      requestData: { name, email, phone: phone ? 'provided' : 'not provided' },
-      action: 'UPDATE_PROFILE_ATTEMPT'
-    });
-
+    const updateData = {};
     
-    const validationErrors = ProfileService.validateProfileUpdate({ name, email, phone });
-    if (validationErrors.length > 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Data tidak valid',
-        errors: validationErrors
-      });
+    if (name !== undefined) {
+      updateData.name = name;
+    }
+    
+    if (phone !== undefined) {
+      updateData.phone = phone;
     }
 
-    
-    const currentUser = await User.findById(userId);
-    if (!currentUser) {
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { ...updateData, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedUser) {
       return res.status(404).json({
         status: 'error',
-        message: 'User tidak ditemukan'
+        message: 'User not found'
       });
     }
 
-    
-    if (email.trim().toLowerCase() !== currentUser.email.toLowerCase()) {
-      const isEmailUnique = await ProfileService.checkEmailUniqueness(email, userId);
-      if (!isEmailUnique) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Email sudah digunakan oleh user lain',
-          errors: [{ field: 'email', message: 'Email sudah terdaftar' }]
-        });
-      }
-    }
-
-    
-    const updatedUser = await ProfileService.updateUserProfile(userId, { name, email, phone });
-
-    
-    logger.info(`Profile updated successfully: ${userId}`, {
-      updatedFields: ['name', 'email', phone ? 'phone' : null].filter(Boolean),
-      action: 'UPDATE_PROFILE_SUCCESS'
+    logger.info('Profile updated successfully', {
+      userId: updatedUser._id,
+      email: updatedUser.email,
+      changes: updateData
     });
 
     res.status(200).json({
       status: 'success',
-      message: 'Profile berhasil diperbarui',
+      message: 'Profile updated successfully',
       data: {
         user: {
           id: updatedUser._id,
           name: updatedUser.name,
           email: updatedUser.email,
           phone: updatedUser.phone,
-          picture: updatedUser.picture,
           role: updatedUser.role,
+          authProvider: updatedUser.authProvider,
           isEmailVerified: updatedUser.isEmailVerified,
-          createdAt: updatedUser.createdAtWIB,
-          updatedAt: updatedUser.updatedAtWIB
+          lastLogin: updatedUser.lastLogin,
+          updatedAt: updatedUser.updatedAt
         }
       }
     });
 
   } catch (error) {
-    logger.error(`Update profile error: ${error.message}`, {
-      userId: req.user?._id,
-      action: 'UPDATE_PROFILE_ERROR',
-      stack: error.stack
-    });
-
+    logger.error('Update profile error:', error);
     
     if (error.name === 'ValidationError') {
-      const validationErrors = Object.values(error.errors).map(err => ({
-        field: err.path,
-        message: err.message
-      }));
-      
       return res.status(400).json({
         status: 'error',
-        message: 'Data tidak valid',
-        errors: validationErrors
-      });
-    }
-
-    if (error.code === 11000) {
-      const field = Object.keys(error.keyValue)[0];
-      return res.status(400).json({
-        status: 'error',
-        message: `${field} sudah digunakan`,
-        errors: [{ field, message: `${field} sudah terdaftar` }]
+        message: 'Validation error',
+        errors: Object.values(error.errors).map(err => err.message)
       });
     }
 
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat memperbarui profile'
+      message: 'Error updating profile'
     });
   }
 };

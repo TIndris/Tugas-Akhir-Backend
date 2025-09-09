@@ -48,7 +48,7 @@ router.get('/google', (req, res, next) => {
   })(req, res, next);
 });
 
-// ✅ FIXED: Google callback handler - USING tokenManager
+// ✅ SIMPLIFIED: Google callback handler without picture
 router.get('/google/callback',
   passport.authenticate('google', { 
     failureRedirect: '/auth/google/failure',
@@ -70,11 +70,9 @@ router.get('/google/callback',
         return res.redirect(`${frontendUrl}/login?error=auth_failed&message=No user data received`);
       }
 
-      // ✅ FIXED: Use generateToken from tokenManager
       const token = generateToken(req.user);
       const refreshTokenValue = generateToken(req.user, '7d');
 
-      // Update last login
       req.user.lastLogin = new Date();
       await req.user.save();
 
@@ -85,21 +83,27 @@ router.get('/google/callback',
         authProvider: req.user.authProvider
       });
 
-      // Set secure cookies for token storage
       const cookieOptions = {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        maxAge: 7 * 24 * 60 * 60 * 1000,
         path: '/'
       };
 
       res.cookie('token', token, cookieOptions);
       res.cookie('refreshToken', refreshTokenValue, cookieOptions);
 
-      // Redirect to frontend with success parameters
+      // ✅ SIMPLIFIED: User info without picture
       const frontendUrl = getFrontendURL();
-      const redirectUrl = `${frontendUrl}/dashboard?login=success&provider=google&token=${encodeURIComponent(token)}`;
+      const userInfo = {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        authProvider: req.user.authProvider
+      };
+      
+      const redirectUrl = `${frontendUrl}/dashboard?login=success&provider=google&user=${encodeURIComponent(JSON.stringify(userInfo))}`;
       
       logger.info('Redirecting to frontend', {
         frontendUrl,
@@ -177,7 +181,6 @@ router.get('/status', authenticateToken, (req, res) => {
       id: req.user._id,
       name: req.user.name,
       email: req.user.email,
-      picture: req.user.picture,
       authProvider: req.user.authProvider,
       isEmailVerified: req.user.isEmailVerified,
       role: req.user.role
