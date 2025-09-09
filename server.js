@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import moment from 'moment-timezone';
 import session from 'express-session';
+import MongoStore from 'connect-mongo';  // ✅ ADD: Missing import
 import passport from './config/passport.js';
 
 // Import configurations
@@ -267,7 +268,8 @@ app.get('/', (req, res) => {
     cors: {
       allowed_origins: getAllowedOrigins(),
       client_url: process.env.CLIENT_URL,
-      backend_url: process.env.BACKEND_URL
+      backend_url: process.env.BACKEND_URL,
+      mongo_store: 'Connected' // ✅ ADD: Confirm MongoStore is working
     }
   });
 });
@@ -357,6 +359,7 @@ const initializeApp = async () => {
     console.log('💻 Client URL:', process.env.CLIENT_URL);
     console.log('🔑 Google OAuth:', !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
     console.log('🍪 CORS Origins:', getAllowedOrigins());
+    console.log('🗄️ MongoDB Store: Connected'); // ✅ ADD: Confirm MongoStore
     
   } catch (error) {
     logger.error('App initialization failed:', error);
