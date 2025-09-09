@@ -7,15 +7,15 @@ import {
   logoutAllSessions,
   setPassword,
   getAuthInfo,
-  refreshToken,        // ADD: Missing function
-  forgotPassword,      // ADD: Missing function
-  resetPassword        // ADD: Missing function
+  refreshToken,
+  forgotPassword,
+  resetPassword
 } from '../controllers/authController.js';
 import { getProfile, updateProfile } from '../controllers/profileController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { loginLimiter } from '../middleware/adminAuth.js';
-import { generateToken } from '../utils/tokenManager.js';  // ADD: Missing import
-import logger from '../config/logger.js';                   // ADD: Missing import
+import { generateToken } from '../utils/tokenManager.js';  // ✅ NOW AVAILABLE
+import logger from '../config/logger.js';
 
 const router = express.Router();
 
@@ -30,12 +30,12 @@ router.post('/login', loginLimiter(), login);
 // ✅ EXISTING: Register route
 router.post('/register', register);
 
-// ✅ ADD: Missing auth routes
+// ✅ EXISTING: Missing auth routes
 router.post('/refresh-token', refreshToken);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
 
-// ✅ ENHANCED: Google OAuth routes with better error handling
+// ✅ ENHANCED: Google OAuth routes
 router.get('/google', (req, res, next) => {
   console.log('=== GOOGLE AUTH INITIATION ===');
   console.log('Environment:', process.env.NODE_ENV);
@@ -44,15 +44,15 @@ router.get('/google', (req, res, next) => {
   
   passport.authenticate('google', { 
     scope: ['profile', 'email'],
-    prompt: 'select_account' // Force account selection
+    prompt: 'select_account'
   })(req, res, next);
 });
 
-// ✅ ENHANCED: Google callback with comprehensive error handling
+// ✅ FIXED: Google callback handler - USING tokenManager
 router.get('/google/callback',
   passport.authenticate('google', { 
     failureRedirect: '/auth/google/failure',
-    session: false // Use JWT instead of sessions
+    session: false
   }),
   async (req, res) => {
     try {
@@ -70,9 +70,13 @@ router.get('/google/callback',
         return res.redirect(`${frontendUrl}/login?error=auth_failed&message=No user data received`);
       }
 
-      // Generate JWT tokens
+      // ✅ FIXED: Use generateToken from tokenManager
       const token = generateToken(req.user);
       const refreshTokenValue = generateToken(req.user, '7d');
+
+      // Update last login
+      req.user.lastLogin = new Date();
+      await req.user.save();
 
       logger.info('Google login successful, tokens generated', { 
         userId: req.user._id,
@@ -122,7 +126,7 @@ router.get('/google/callback',
   }
 );
 
-// ✅ ADD: Google auth failure handler
+// ✅ Google auth failure handler
 router.get('/google/failure', (req, res) => {
   logger.error('Google authentication failed');
   console.log('=== GOOGLE AUTH FAILURE ===');
@@ -131,7 +135,7 @@ router.get('/google/failure', (req, res) => {
   res.redirect(`${frontendUrl}/login?error=google_auth_failed&message=Authentication failed`);
 });
 
-// ✅ ADD: Test endpoint for Google auth configuration
+// ✅ Test endpoint for Google auth configuration
 router.get('/google/test', (req, res) => {
   const backendUrl = process.env.BACKEND_URL || 'https://dsc-backend-ashy.vercel.app';
   const frontendUrl = getFrontendURL();
@@ -149,6 +153,10 @@ router.get('/google/test', (req, res) => {
     jwt_secret: process.env.JWT_SECRET ? 'Configured' : 'Missing',
     session_secret: process.env.SESSION_SECRET ? 'Configured' : 'Missing',
     cors_enabled: true,
+    token_manager: {
+      blacklist_active: true,
+      cleanup_enabled: process.env.NODE_ENV !== 'production'
+    },
     timestamp: new Date().toISOString()
   });
 });

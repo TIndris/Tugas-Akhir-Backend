@@ -6,6 +6,24 @@ const tokenBlacklist = new Set();
 // Store logout timestamps for additional security
 const logoutTimestamps = new Map();
 
+// ✅ ADD: generateToken function
+export const generateToken = (user, expiresIn = '24h') => {
+  return jwt.sign(
+    { id: user._id },
+    process.env.JWT_SECRET,
+    { expiresIn }
+  );
+};
+
+// ✅ ADD: verifyToken function
+export const verifyToken = (token) => {
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET);
+  } catch (error) {
+    throw new Error('Invalid token');
+  }
+};
+
 export const blacklistToken = (token) => {
   try {
     const decoded = jwt.decode(token);
@@ -44,6 +62,12 @@ export const isTokenBlacklisted = (token) => {
   return false;
 };
 
+// ✅ ADD: Export checkLogoutTimestamp for compatibility
+export const checkLogoutTimestamp = (userId, tokenIssuedAt) => {
+  const userLogoutTime = logoutTimestamps.get(userId.toString());
+  return userLogoutTime && tokenIssuedAt < userLogoutTime;
+};
+
 // Clean up old blacklisted tokens (run periodically)
 export const cleanupBlacklist = () => {
   const now = Date.now();
@@ -69,5 +93,7 @@ export const cleanupBlacklist = () => {
   }
 };
 
-// Run cleanup every hour
-setInterval(cleanupBlacklist, 60 * 60 * 1000);
+// Run cleanup every hour in non-serverless environments
+if (process.env.NODE_ENV !== 'production') {
+  setInterval(cleanupBlacklist, 60 * 60 * 1000);
+}

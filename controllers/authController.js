@@ -2,20 +2,14 @@ import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import logger from '../config/logger.js';
-import { blacklistToken } from '../utils/tokenManager.js';
+import { 
+  blacklistToken, 
+  generateToken, 
+  checkLogoutTimestamp 
+} from '../utils/tokenManager.js';  // ✅ USE tokenManager functions
 
 const loginAttempts = new Map();
-const logoutTimestamps = new Map(); 
-const passwordResetTokens = new Map(); // For password reset functionality
-
-// ✅ FIXED: Use JWT_SECRET instead of SESSION_SECRET
-const generateToken = (user, expiresIn = '24h') => {
-  return jwt.sign(
-    { id: user._id },
-    process.env.JWT_SECRET, // FIXED: Changed from SESSION_SECRET
-    { expiresIn }
-  );
-};
+const passwordResetTokens = new Map();
 
 export const logout = async (req, res) => {
   try {
@@ -34,7 +28,7 @@ export const logout = async (req, res) => {
       action: 'LOGOUT_ATTEMPT'
     });
 
-    // Blacklist the current token
+    // ✅ USE: tokenManager blacklistToken
     blacklistToken(req.token);
 
     logger.info(`Logout successful: ${userEmail}`, {
@@ -42,7 +36,6 @@ export const logout = async (req, res) => {
       action: 'LOGOUT_SUCCESS'
     });
 
-    // ✅ ENHANCED: Clear multiple cookie names
     res.clearCookie('jwt');
     res.clearCookie('token');
     res.clearCookie('refreshToken');
@@ -73,13 +66,9 @@ export const logoutAllSessions = async (req, res) => {
       action: 'LOGOUT_ALL_SESSIONS'
     });
 
-    // Add user to logout timestamps to invalidate all existing tokens
-    logoutTimestamps.set(userId.toString(), Date.now());
-
-    // Also blacklist current token
+    // ✅ USE: tokenManager blacklistToken (will handle logout timestamp)
     blacklistToken(req.token);
 
-    // ✅ ENHANCED: Clear multiple cookie names
     res.clearCookie('jwt');
     res.clearCookie('token');
     res.clearCookie('refreshToken');
@@ -142,7 +131,7 @@ export const login = async (req, res) => {
     // Success - reset attempts
     loginAttempts.delete(email);
 
-    // ✅ FIXED: Generate token with JWT_SECRET
+    // ✅ USE: tokenManager generateToken
     const token = generateToken(user);
     const refreshToken = generateToken(user, '7d');
 
@@ -161,7 +150,7 @@ export const login = async (req, res) => {
     res.status(200).json({
       status: 'success',
       token,
-      refreshToken, // ✅ ADD: Include refresh token
+      refreshToken,
       data: {
         user: {
           id: user._id,
@@ -193,7 +182,6 @@ export const register = async (req, res) => {
       action: 'REGISTER_ATTEMPT'
     });
 
-    // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       logger.warn(`Registration failed - Email already exists: ${email}`);
@@ -203,7 +191,6 @@ export const register = async (req, res) => {
       });
     }
 
-    // Create user with customer role
     const user = await User.create({
       name,
       email,
@@ -219,17 +206,16 @@ export const register = async (req, res) => {
       action: 'REGISTER_SUCCESS' 
     });
 
-    // ✅ FIXED: Generate token with JWT_SECRET
+    // ✅ USE: tokenManager generateToken
     const token = generateToken(user);
     const refreshToken = generateToken(user, '7d');
 
-    // Remove password from response
     user.password = undefined;
 
     res.status(201).json({
       status: 'success',
       token,
-      refreshToken, // ✅ ADD: Include refresh token
+      refreshToken,
       data: {
         user: {
           id: user._id,
@@ -253,7 +239,6 @@ export const register = async (req, res) => {
   }
 };
 
-// ✅ ADD: Missing refresh token function
 export const refreshToken = async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -265,7 +250,6 @@ export const refreshToken = async (req, res) => {
       });
     }
 
-    // Verify refresh token
     const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
     const user = await User.findById(decoded.id);
     
@@ -276,7 +260,7 @@ export const refreshToken = async (req, res) => {
       });
     }
 
-    // Check if user was logged out
+    // ✅ USE: tokenManager checkLogoutTimestamp
     if (checkLogoutTimestamp(user._id, decoded.iat * 1000)) {
       return res.status(401).json({
         status: 'error',
@@ -284,7 +268,7 @@ export const refreshToken = async (req, res) => {
       });
     }
 
-    // Generate new tokens
+    // ✅ USE: tokenManager generateToken
     const newToken = generateToken(user);
     const newRefreshToken = generateToken(user, '7d');
 
@@ -446,8 +430,6 @@ export const resetPassword = async (req, res) => {
     passwordResetTokens.delete(token);
 
     // Invalidate all existing tokens for this user
-    logoutTimestamps.set(user._id.toString(), Date.now());
-
     logger.info(`Password reset successful for: ${user.email}`, {
       action: 'RESET_PASSWORD_SUCCESS'
     });
@@ -544,9 +526,4 @@ export const getAuthInfo = async (req, res) => {
       message: 'Error getting auth info'
     });
   }
-};
-
-export const checkLogoutTimestamp = (userId, tokenIssuedAt) => {
-  const userLogoutTime = logoutTimestamps.get(userId.toString());
-  return userLogoutTime && tokenIssuedAt < userLogoutTime;
 };
