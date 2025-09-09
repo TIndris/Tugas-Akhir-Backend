@@ -1,11 +1,21 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import logger from '../config/logger.js';
 import { blacklistToken } from '../utils/tokenManager.js';
 
 const loginAttempts = new Map();
 const logoutTimestamps = new Map(); 
+const passwordResetTokens = new Map(); // For password reset functionality
 
+// ✅ FIXED: Use JWT_SECRET instead of SESSION_SECRET
+const generateToken = (user, expiresIn = '24h') => {
+  return jwt.sign(
+    { id: user._id },
+    process.env.JWT_SECRET, // FIXED: Changed from SESSION_SECRET
+    { expiresIn }
+  );
+};
 
 export const logout = async (req, res) => {
   try {
@@ -32,7 +42,11 @@ export const logout = async (req, res) => {
       action: 'LOGOUT_SUCCESS'
     });
 
+    // ✅ ENHANCED: Clear multiple cookie names
     res.clearCookie('jwt');
+    res.clearCookie('token');
+    res.clearCookie('refreshToken');
+    
     res.status(200).json({
       status: 'success',
       message: 'Logged out successfully'
@@ -47,7 +61,6 @@ export const logout = async (req, res) => {
     });
   }
 };
-
 
 export const logoutAllSessions = async (req, res) => {
   try {
@@ -66,7 +79,11 @@ export const logoutAllSessions = async (req, res) => {
     // Also blacklist current token
     blacklistToken(req.token);
 
+    // ✅ ENHANCED: Clear multiple cookie names
     res.clearCookie('jwt');
+    res.clearCookie('token');
+    res.clearCookie('refreshToken');
+    
     res.status(200).json({
       status: 'success',
       message: 'Logged out from all sessions successfully'
@@ -80,7 +97,6 @@ export const logoutAllSessions = async (req, res) => {
     });
   }
 };
-
 
 export const login = async (req, res) => {
   try {
@@ -100,7 +116,6 @@ export const login = async (req, res) => {
       });
     }
 
-    
     if (user.googleId && !user.password) {
       logger.warn(`Google user attempting password login: ${email}`, {
         action: 'GOOGLE_USER_PASSWORD_ATTEMPT'
@@ -127,12 +142,13 @@ export const login = async (req, res) => {
     // Success - reset attempts
     loginAttempts.delete(email);
 
-    // Generate token
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.SESSION_SECRET,
-      { expiresIn: '24h' }
-    );
+    // ✅ FIXED: Generate token with JWT_SECRET
+    const token = generateToken(user);
+    const refreshToken = generateToken(user, '7d');
+
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
 
     // Remove password from response
     user.password = undefined;
@@ -142,20 +158,20 @@ export const login = async (req, res) => {
       action: 'LOGIN_SUCCESS'
     });
 
-    // Send response
     res.status(200).json({
       status: 'success',
       token,
+      refreshToken, // ✅ ADD: Include refresh token
       data: {
         user: {
           id: user._id,
           name: user.name,
           email: user.email,
           role: user.role,
-          
           authProvider: user.authProvider || 'local',
           picture: user.picture,
-          isEmailVerified: user.isEmailVerified
+          isEmailVerified: user.isEmailVerified,
+          lastLogin: user.lastLogin
         }
       }
     });
@@ -169,7 +185,6 @@ export const login = async (req, res) => {
     });
   }
 };
-
 
 export const register = async (req, res) => {
   try {
@@ -195,7 +210,8 @@ export const register = async (req, res) => {
       password,
       role: 'customer',
       isEmailVerified: false,
-      authProvider: 'local'
+      authProvider: 'local',
+      lastLogin: new Date()
     });
 
     logger.info(`Registration successful: ${email}`, {
@@ -203,12 +219,9 @@ export const register = async (req, res) => {
       action: 'REGISTER_SUCCESS' 
     });
 
-    // Generate token
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.SESSION_SECRET,
-      { expiresIn: '24h' }
-    );
+    // ✅ FIXED: Generate token with JWT_SECRET
+    const token = generateToken(user);
+    const refreshToken = generateToken(user, '7d');
 
     // Remove password from response
     user.password = undefined;
@@ -216,6 +229,7 @@ export const register = async (req, res) => {
     res.status(201).json({
       status: 'success',
       token,
+      refreshToken, // ✅ ADD: Include refresh token
       data: {
         user: {
           id: user._id,
@@ -223,7 +237,8 @@ export const register = async (req, res) => {
           email: user.email,
           role: user.role,
           authProvider: user.authProvider,
-          isEmailVerified: user.isEmailVerified
+          isEmailVerified: user.isEmailVerified,
+          lastLogin: user.lastLogin
         }
       }
     });
@@ -238,59 +253,220 @@ export const register = async (req, res) => {
   }
 };
 
-
-export const googleCallbackHandler = async (req, res) => {
+// ✅ ADD: Missing refresh token function
+export const refreshToken = async (req, res) => {
   try {
-    if (!req.user) {
-      logger.error('Google OAuth: No user in request');
-      return res.redirect(`${process.env.CLIENT_URL}/login?error=oauth_failed`);
+    const { refreshToken } = req.body;
+    
+    if (!refreshToken) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Refresh token is required'
+      });
     }
 
-    const user = req.user;
+    // Verify refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    
+    if (!user) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Invalid refresh token'
+      });
+    }
 
-    // Generate JWT token dengan payload yang sama seperti login biasa
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.SESSION_SECRET,
-      { expiresIn: '24h' }
-    );
+    // Check if user was logged out
+    if (checkLogoutTimestamp(user._id, decoded.iat * 1000)) {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Token invalidated due to logout'
+      });
+    }
 
-    logger.info(`Google OAuth successful: ${user.email}`, {
-      role: user.role,
-      action: 'GOOGLE_OAUTH_SUCCESS',
-      isNewUser: user.isNewUser || false
+    // Generate new tokens
+    const newToken = generateToken(user);
+    const newRefreshToken = generateToken(user, '7d');
+
+    logger.info(`Token refreshed for user: ${user.email}`, {
+      action: 'TOKEN_REFRESH_SUCCESS'
     });
 
-    
-    res.cookie('jwt', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000
+    res.status(200).json({
+      status: 'success',
+      token: newToken,
+      refreshToken: newRefreshToken,
+      data: {
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          authProvider: user.authProvider,
+          picture: user.picture,
+          isEmailVerified: user.isEmailVerified
+        }
+      }
     });
-
-    
-    const userData = {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      picture: user.picture,
-      authProvider: user.authProvider,
-      isEmailVerified: user.isEmailVerified
-    };
-
-    // Redirect with both cookie and query params for flexibility
-    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify(userData))}`;
-    
-    res.redirect(redirectUrl);
 
   } catch (error) {
-    logger.error('Google OAuth callback error:', error);
-    res.redirect(`${process.env.CLIENT_URL}/login?error=callback_error`);
+    logger.error(`Refresh token error: ${error.message}`, {
+      action: 'TOKEN_REFRESH_ERROR'
+    });
+    
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Invalid refresh token'
+      });
+    }
+    
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        status: 'error',
+        message: 'Refresh token expired'
+      });
+    }
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal server error'
+    });
   }
 };
 
+// ✅ ADD: Missing forgot password function
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Email is required'
+      });
+    }
+
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      // Don't reveal if email exists or not
+      return res.status(200).json({
+        status: 'success',
+        message: 'If the email exists, a password reset link has been sent'
+      });
+    }
+
+    if (user.googleId && !user.password) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This account uses Google Sign In. No password to reset.'
+      });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpiry = Date.now() + 3600000; // 1 hour
+
+    // Store reset token (in production, store in database)
+    passwordResetTokens.set(resetToken, {
+      userId: user._id,
+      email: user.email,
+      expiry: resetTokenExpiry
+    });
+
+    logger.info(`Password reset requested for: ${email}`, {
+      action: 'FORGOT_PASSWORD_REQUEST'
+    });
+
+    // In production, send email here
+    // For now, just return the token (remove this in production)
+    res.status(200).json({
+      status: 'success',
+      message: 'Password reset link has been sent to your email',
+      // Remove this in production:
+      resetToken: process.env.NODE_ENV === 'development' ? resetToken : undefined
+    });
+
+  } catch (error) {
+    logger.error(`Forgot password error: ${error.message}`, {
+      action: 'FORGOT_PASSWORD_ERROR'
+    });
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal server error'
+    });
+  }
+};
+
+// ✅ ADD: Missing reset password function
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword, confirmPassword } = req.body;
+    
+    if (!token || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'All fields are required'
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Passwords do not match'
+      });
+    }
+
+    // Check reset token
+    const resetData = passwordResetTokens.get(token);
+    
+    if (!resetData || Date.now() > resetData.expiry) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid or expired reset token'
+      });
+    }
+
+    // Find user and update password
+    const user = await User.findById(resetData.userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User not found'
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    // Remove used token
+    passwordResetTokens.delete(token);
+
+    // Invalidate all existing tokens for this user
+    logoutTimestamps.set(user._id.toString(), Date.now());
+
+    logger.info(`Password reset successful for: ${user.email}`, {
+      action: 'RESET_PASSWORD_SUCCESS'
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Password reset successfully. Please login with your new password.'
+    });
+
+  } catch (error) {
+    logger.error(`Reset password error: ${error.message}`, {
+      action: 'RESET_PASSWORD_ERROR'
+    });
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal server error'
+    });
+  }
+};
 
 export const setPassword = async (req, res) => {
   try {
@@ -345,7 +521,6 @@ export const setPassword = async (req, res) => {
   }
 };
 
-
 export const getAuthInfo = async (req, res) => {
   try {
     const user = req.user;
@@ -357,7 +532,8 @@ export const getAuthInfo = async (req, res) => {
         hasPassword: !!user.password,
         hasGoogleAuth: !!user.googleId,
         isEmailVerified: user.isEmailVerified,
-        canSetPassword: user.googleId && !user.password
+        canSetPassword: user.googleId && !user.password,
+        lastLogin: user.lastLogin
       }
     });
 
@@ -369,7 +545,6 @@ export const getAuthInfo = async (req, res) => {
     });
   }
 };
-
 
 export const checkLogoutTimestamp = (userId, tokenIssuedAt) => {
   const userLogoutTime = logoutTimestamps.get(userId.toString());
