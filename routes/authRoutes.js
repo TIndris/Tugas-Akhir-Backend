@@ -14,41 +14,28 @@ import {
 import { getProfile, updateProfile } from '../controllers/profileController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { loginLimiter } from '../middleware/adminAuth.js';
-import { generateToken } from '../utils/tokenManager.js';  // ✅ NOW AVAILABLE
+import { generateToken } from '../utils/tokenManager.js';
 import logger from '../config/logger.js';
 
 const router = express.Router();
 
-// Helper function to get frontend URL
 const getFrontendURL = () => {
   return process.env.CLIENT_URL || 'http://localhost:3000';
 };
 
-// ✅ EXISTING: Local auth route with rate limiting
 router.post('/login', loginLimiter(), login);
-
-// ✅ EXISTING: Register route
 router.post('/register', register);
-
-// ✅ EXISTING: Missing auth routes
 router.post('/refresh-token', refreshToken);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
 
-// ✅ ENHANCED: Google OAuth routes
 router.get('/google', (req, res, next) => {
-  console.log('=== GOOGLE AUTH INITIATION ===');
-  console.log('Environment:', process.env.NODE_ENV);
-  console.log('Client URL:', process.env.CLIENT_URL);
-  console.log('Backend URL:', process.env.BACKEND_URL);
-  
   passport.authenticate('google', { 
     scope: ['profile', 'email'],
     prompt: 'select_account'
   })(req, res, next);
 });
 
-// ✅ SIMPLIFIED: Google callback handler without picture
 router.get('/google/callback',
   passport.authenticate('google', { 
     failureRedirect: '/auth/google/failure',
@@ -56,14 +43,6 @@ router.get('/google/callback',
   }),
   async (req, res) => {
     try {
-      console.log('=== GOOGLE CALLBACK SUCCESS ===');
-      console.log('User from passport:', req.user ? { 
-        id: req.user._id, 
-        email: req.user.email, 
-        name: req.user.name,
-        authProvider: req.user.authProvider
-      } : 'No user');
-
       if (!req.user) {
         logger.error('No user in Google callback');
         const frontendUrl = getFrontendURL();
@@ -83,10 +62,11 @@ router.get('/google/callback',
         authProvider: req.user.authProvider
       });
 
+      const isProduction = process.env.NODE_ENV === 'production';
       const cookieOptions = {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000,
         path: '/'
       };
@@ -94,16 +74,24 @@ router.get('/google/callback',
       res.cookie('token', token, cookieOptions);
       res.cookie('refreshToken', refreshTokenValue, cookieOptions);
 
-      // ✅ SIMPLIFIED: User info without picture
       const frontendUrl = getFrontendURL();
       const userInfo = {
         id: req.user._id,
         name: req.user.name,
         email: req.user.email,
-        authProvider: req.user.authProvider
+        authProvider: req.user.authProvider,
+        token: token,
+        refreshToken: refreshTokenValue
       };
       
-      const redirectUrl = `${frontendUrl}/dashboard?login=success&provider=google&user=${encodeURIComponent(JSON.stringify(userInfo))}`;
+      const params = new URLSearchParams({
+        login: 'success',
+        provider: 'google',
+        user: JSON.stringify(userInfo),
+        timestamp: Date.now()
+      });
+      
+      const redirectUrl = `${frontendUrl}/dashboard?${params.toString()}`;
       
       logger.info('Redirecting to frontend', {
         frontendUrl,
@@ -113,10 +101,6 @@ router.get('/google/callback',
       res.redirect(redirectUrl);
 
     } catch (error) {
-      console.error('=== GOOGLE CALLBACK ERROR ===');
-      console.error('Error:', error.message);
-      console.error('Stack:', error.stack);
-
       logger.error('Google callback error:', {
         error: error.message,
         stack: error.stack,
@@ -130,16 +114,13 @@ router.get('/google/callback',
   }
 );
 
-// ✅ Google auth failure handler
 router.get('/google/failure', (req, res) => {
   logger.error('Google authentication failed');
-  console.log('=== GOOGLE AUTH FAILURE ===');
   
   const frontendUrl = getFrontendURL();
   res.redirect(`${frontendUrl}/login?error=google_auth_failed&message=Authentication failed`);
 });
 
-// ✅ Test endpoint for Google auth configuration
 router.get('/google/test', (req, res) => {
   const backendUrl = process.env.BACKEND_URL || 'https://dsc-backend-ashy.vercel.app';
   const frontendUrl = getFrontendURL();
@@ -165,15 +146,39 @@ router.get('/google/test', (req, res) => {
   });
 });
 
-// ✅ EXISTING: Profile routes
+router.get('/cookies-test', (req, res) => {
+  res.json({
+    cookies: req.cookies,
+    headers: {
+      origin: req.get('Origin'),
+      authorization: req.headers.authorization ? 'Present' : 'Missing'
+    },
+    query: req.query,
+    timestamp: new Date().toISOString()
+  });
+});
+
+router.get('/test-auth', authenticateToken, (req, res) => {
+  res.json({
+    status: 'success',
+    message: 'Authentication working!',
+    user: {
+      id: req.user._id,
+      email: req.user.email,
+      name: req.user.name,
+      role: req.user.role,
+      authProvider: req.user.authProvider
+    },
+    tokenSource: req.headers.authorization ? 'header' : 'cookie',
+    timestamp: new Date().toISOString()
+  });
+});
+
 router.get('/profile', authenticateToken, getProfile);
 router.patch('/profile', authenticateToken, updateProfile);
-
-// ✅ EXISTING: Google user specific routes
 router.post('/set-password', authenticateToken, setPassword);
 router.get('/auth-info', authenticateToken, getAuthInfo);
 
-// ✅ EXISTING: Protected routes
 router.get('/status', authenticateToken, (req, res) => {
   res.json({
     isAuthenticated: true,
@@ -188,7 +193,6 @@ router.get('/status', authenticateToken, (req, res) => {
   });
 });
 
-// ✅ EXISTING: Logout routes
 router.post('/logout', authenticateToken, logout);
 router.post('/logout-all', authenticateToken, logoutAllSessions);
 

@@ -6,16 +6,14 @@ import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import moment from 'moment-timezone';
 import session from 'express-session';
-import MongoStore from 'connect-mongo';  // ✅ ADD: Missing import
+import MongoStore from 'connect-mongo';
 import passport from './config/passport.js';
 
-// Import configurations
 import connectDB from './config/db.js';
 import { connectRedis } from './config/redis.js'; 
 import logger from './config/logger.js';
 import { initAdmin } from './config/initAdmin.js';
 
-// Import routes
 import authRoutes from './routes/authRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import bookingRoutes from './routes/bookingRoutes.js';
@@ -27,10 +25,8 @@ dotenv.config();
 
 const app = express();
 
-// Trust proxy for Vercel
 app.set('trust proxy', 1);
 
-// ✅ ENHANCED: Rate limiting dengan skip untuk production (existing logic)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -38,7 +34,6 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip for localhost origins and production environment
     const origin = req.get('Origin');
     const isLocalhost = origin && origin.includes('localhost');
     const isProduction = process.env.NODE_ENV === 'production';
@@ -47,7 +42,6 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// ✅ ENHANCED: Security middleware with better cross-origin support
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   crossOriginEmbedderPolicy: false,
@@ -66,39 +60,32 @@ app.use(helmet({
 }));
 app.use(mongoSanitize());
 
-// ✅ ENHANCED: CORS (keeping existing logic but adding debug)
 const getAllowedOrigins = () => {
   const origins = [
     process.env.CLIENT_URL,
     'http://localhost:3000',
     'http://localhost:3001',
-    'http://127.0.0.1:3000',
-    process.env.FRONTEND_URL,
-    process.env.BACKEND_URL
+    'http://127.0.0.1:3000'
   ].filter(Boolean);
 
-  console.log('🌐 Allowed CORS origins:', origins);
   return origins;
 };
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) {
-      console.log('✅ Request with no origin allowed');
       return callback(null, true);
     }
 
     const allowedOrigins = getAllowedOrigins();
     
-    // Check if origin is allowed
-    if (allowedOrigins.includes(origin) || origin.includes('localhost')) {
-      console.log('✅ CORS allowed for origin:', origin);
+    if (allowedOrigins.includes(origin) || 
+        origin.includes('localhost') || 
+        origin.includes('127.0.0.1') ||
+        origin.includes('vercel.app')) {
       callback(null, true);
     } else {
-      // Log for debugging but still allow (for flexibility)
-      console.log('⚠️ CORS origin not in whitelist (but allowing):', origin);
-      callback(null, true); // Allow all for now
+      callback(null, true);
     }
   },
   credentials: true,
@@ -110,37 +97,37 @@ app.use(cors({
     'Accept',
     'Origin',
     'Access-Control-Request-Method',
-    'Access-Control-Request-Headers'
+    'Access-Control-Request-Headers',
+    'Cache-Control',
+    'Pragma'
   ],
-  exposedHeaders: ['Content-Range', 'X-Content-Range', 'Set-Cookie']
+  exposedHeaders: ['Content-Range', 'X-Content-Range', 'Set-Cookie'],
+  optionsSuccessStatus: 200
 }));
 
 app.options('*', cors());
 
-// ✅ ENHANCED: Session configuration with MongoDB store
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret',
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({
     mongoUrl: process.env.MONGODB_URI,
-    touchAfter: 24 * 3600, // lazy session update
-    ttl: 24 * 60 * 60 // 24 hours
+    touchAfter: 24 * 3600,
+    ttl: 24 * 60 * 60
   }),
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    maxAge: 24 * 60 * 60 * 1000,
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
   },
   name: 'dsc.session'
 }));
 
-// ✅ EXISTING: Passport middleware
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ✅ EXISTING: Body parsing
 app.use(express.json({ 
   limit: '50mb',
   strict: false 
@@ -152,24 +139,19 @@ app.use(express.urlencoded({
   parameterLimit: 50000
 }));
 
-// ✅ EXISTING: Payment debugging middleware
 app.use((req, res, next) => {
   if (req.path.includes('/payments') && req.method === 'POST') {
-    console.log('🔍 Payment request debug:', {
+    console.log('Payment request:', {
       method: req.method,
       path: req.path,
       contentType: req.headers['content-type'],
-      contentLength: req.headers['content-length'],
-      userAgent: req.headers['user-agent'],
       hasBody: !!req.body,
-      bodyKeys: req.body ? Object.keys(req.body) : [],
       timestamp: new Date().toISOString()
     });
   }
   next();
 });
 
-// ✅ EXISTING: Error handling
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
     logger.error('Bad JSON syntax:', error);
@@ -183,12 +165,9 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
-// ✅ ADD: CORS debug middleware
 app.use((req, res, next) => {
   const origin = req.get('Origin');
-  console.log(`${req.method} ${req.path} - Origin: ${origin || 'No Origin'}`);
   
-  // Add CORS headers manually as backup
   if (origin) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Access-Control-Allow-Credentials', 'true');
@@ -197,7 +176,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ EXISTING: Logging middleware
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     const start = Date.now();
@@ -209,7 +187,6 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// ✅ ENHANCED: Health check dengan Google OAuth info (keeping existing structure)
 app.get('/', (req, res) => {
   const now = moment().tz('Asia/Jakarta');
   
@@ -236,7 +213,7 @@ app.get('/', (req, res) => {
         '/admin - Admin management routes', 
         '/fields - Field management routes',
         '/bookings - Booking management routes',
-        '/payments - Payment management routes (includes booking confirmation)'
+        '/payments - Payment management routes'
       ],
       auth_methods: [
         'POST /auth/register - Regular registration',
@@ -250,33 +227,31 @@ app.get('/', (req, res) => {
       ],
       google_oauth: {
         enabled: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
-        callback_url: `${process.env.BACKEND_URL || 'https://dsc-backend-ashy.vercel.app'}/auth/google/callback`,
-        frontend_callback: `${process.env.CLIENT_URL || 'http://localhost:3000'}/dashboard`,
+        callback_url: `${process.env.BACKEND_URL}/auth/google/callback`,
+        frontend_callback: `${process.env.CLIENT_URL}/dashboard`,
         test_endpoint: '/auth/google/test'
       },
       features: [
-        '✅ Public API - Accessible from any origin',
-        '✅ Google OAuth integration',
-        '✅ JWT authentication for all users',
-        '✅ Multi-role support (customer/kasir/admin)',
-        '✅ Redis caching & session management',
-        '✅ Cross-origin cookie support',
-        '✅ Comprehensive error handling'
+        'Public API - Accessible from any origin',
+        'Google OAuth integration',
+        'JWT authentication for all users',
+        'Multi-role support (customer/kasir/admin)',
+        'Redis caching & session management',
+        'Cross-origin cookie support',
+        'Comprehensive error handling'
       ]
     },
     cors: {
       allowed_origins: getAllowedOrigins(),
       client_url: process.env.CLIENT_URL,
       backend_url: process.env.BACKEND_URL,
-      mongo_store: 'Connected' // ✅ ADD: Confirm MongoStore is working
+      mongo_store: 'Connected'
     }
   });
 });
 
-// ✅ EXISTING: Handle favicon requests silently
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-// ✅ EXISTING: API Routes (tetap sama)
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
@@ -284,7 +259,6 @@ app.use('/fields', fieldRoutes);
 app.use('/payments', paymentRoutes); 
 app.use('/analytics', analyticsRoutes);  
 
-// ✅ EXISTING: 404 handler
 app.use((req, res) => {
   res.status(404).json({
     status: 'error',
@@ -295,9 +269,7 @@ app.use((req, res) => {
   });
 });
 
-// ✅ ENHANCED: Global error handler
 app.use((err, req, res, next) => {
-  // Log error details
   logger.error('Global error handler:', {
     error: err.message,
     stack: err.stack,
@@ -310,7 +282,6 @@ app.use((err, req, res, next) => {
     logger.error(err.stack);
   }
 
-  // Handle CORS errors specifically
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({
       status: 'error',
@@ -330,7 +301,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ✅ EXISTING: Database initialization
 const initializeApp = async () => {
   try {
     await connectDB();
@@ -351,14 +321,13 @@ const initializeApp = async () => {
       }
     }
 
-    // Log startup info
-    console.log('🚀 DSC Backend Started Successfully!');
-    console.log('📊 Environment:', process.env.NODE_ENV);
-    console.log('🌐 Backend URL:', process.env.BACKEND_URL);
-    console.log('💻 Client URL:', process.env.CLIENT_URL);
-    console.log('🔑 Google OAuth:', !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
-    console.log('🍪 CORS Origins:', getAllowedOrigins());
-    console.log('🗄️ MongoDB Store: Connected'); // ✅ ADD: Confirm MongoStore
+    console.log('DSC Backend Started Successfully!');
+    console.log('Environment:', process.env.NODE_ENV);
+    console.log('Backend URL:', process.env.BACKEND_URL);
+    console.log('Client URL:', process.env.CLIENT_URL);
+    console.log('Google OAuth:', !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
+    console.log('CORS Origins:', getAllowedOrigins());
+    console.log('MongoDB Store: Connected');
     
   } catch (error) {
     logger.error('App initialization failed:', error);
