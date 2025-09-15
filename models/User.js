@@ -101,9 +101,20 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 
 // ✅ JSON transform to hide sensitive fields
 userSchema.set('toJSON', {
-  transform: function(doc, ret) {
-    delete ret.password;
+  transform: function(doc, ret, options) {
+    ret.id = ret._id;
+    delete ret._id;
     delete ret.__v;
+    delete ret.password; // Always exclude password
+    
+    // ✅ INCLUDE PHONE FIELD
+    if (ret.phone) {
+      ret.phoneNumber = ret.phone; // Alias for compatibility
+    }
+    if (ret.phoneNumber) {
+      ret.phone = ret.phoneNumber; // Alias for compatibility
+    }
+    
     return ret;
   }
 });

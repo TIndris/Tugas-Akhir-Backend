@@ -10,9 +10,10 @@ import User from '../models/User.js';
 import Field from '../models/Field.js';
 import moment from 'moment-timezone';
 
-// ✅ ENHANCED: createBooking with better SMS integration
+// ✅ FIXED: createBooking with proper variable scoping
 export const createBooking = async (req, res) => {
   let newBooking = null;
+  let user = null; // ✅ DECLARE USER VARIABLE AT TOP
   
   try {
     const { lapangan_id, tanggal_booking, jam_booking, durasi } = req.body;
@@ -23,6 +24,24 @@ export const createBooking = async (req, res) => {
         message: 'Semua field harus diisi'
       });
     }
+
+    // ✅ GET USER EARLY FOR SMS PURPOSES
+    user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'User tidak ditemukan'
+      });
+    }
+
+    logger.info('Starting booking creation:', {
+      userId: req.user._id,
+      userName: user.name,
+      userPhone: user.phone || user.phoneNumber,
+      lapanganId: lapangan_id,
+      tanggal: tanggal_booking,
+      jam: jam_booking
+    });
 
     // Validate field exists
     const field = await Field.findById(lapangan_id);
@@ -130,57 +149,52 @@ export const createBooking = async (req, res) => {
       amount: totalAmount
     });
 
-    // ✅ ENHANCED SMS NOTIFICATION WITH DETAILED ERROR HANDLING
+    // ✅ FIXED: SMS NOTIFICATION WITH PROPER ERROR HANDLING
     let smsResult = null;
     let smsError = null;
 
     try {
-      const user = await User.findById(req.user._id);
-      
+      // ✅ USER ALREADY FETCHED AT TOP, NO NEED TO FETCH AGAIN
       logger.info('Attempting to send SMS notification:', {
-        userId: req.user._id,
-        userName: user?.name,
-        userPhone: user?.phoneNumber || user?.phone,
+        userId: user._id,
+        userName: user.name,
+        userPhone: user.phone || user.phoneNumber,
         bookingId: newBooking.bookingId
       });
 
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      const userPhone = user.phoneNumber || user.phone;
+      const userPhone = user.phone || user.phoneNumber;
       if (!userPhone) {
-        throw new Error('User has no phone number');
+        throw new Error('User memiliki nomor telepon yang kosong atau tidak valid');
       }
 
-      // ✅ CREATE COMPATIBLE BOOKING OBJECT FOR SMS
+      // ✅ CREATE BOOKING OBJECT FOR SMS SERVICE
       const bookingForSMS = {
         bookingId: newBooking.bookingId,
-        date: newBooking.tanggal_booking,
-        startTime: newBooking.jam_booking,
-        endTime: endTime.format('HH:mm'),
-        totalAmount: newBooking.harga,
-        status: newBooking.status_pemesanan,
-        fieldId: {
-          name: newBooking.lapangan?.nama || field.nama
+        tanggal_booking: newBooking.tanggal_booking,
+        jam_booking: newBooking.jam_booking,
+        durasi: newBooking.durasi,
+        harga: newBooking.harga,
+        status_pemesanan: newBooking.status_pemesanan,
+        lapangan: {
+          nama: newBooking.lapangan?.nama || field.nama
         }
       };
 
       // Send payment reminder
       smsResult = await NotificationService.sendPaymentReminder(bookingForSMS, user);
       
-      if (smsResult.success) {
+      if (smsResult && smsResult.success) {
         newBooking.paymentReminderSent = true;
         await newBooking.save({ validateBeforeSave: false });
         
         logger.info('Payment reminder SMS sent successfully:', {
           bookingId: newBooking.bookingId,
-          userId: req.user._id,
+          userId: user._id,
           phone: userPhone,
-          messageSid: smsResult.messageSid
+          messageSid: smsResult.messageSid || smsResult.sid
         });
       } else {
-        throw new Error(smsResult.error || 'SMS sending failed');
+        throw new Error(smsResult?.error || 'SMS sending failed without specific error');
       }
 
     } catch (error) {
@@ -188,8 +202,9 @@ export const createBooking = async (req, res) => {
       logger.error('Failed to send payment reminder SMS:', {
         error: error.message,
         bookingId: newBooking.bookingId,
-        userId: req.user._id,
-        userPhone: user?.phoneNumber || user?.phone
+        userId: user._id,
+        userPhone: user.phone || user.phoneNumber,
+        stack: error.stack
       });
     }
 
@@ -201,12 +216,12 @@ export const createBooking = async (req, res) => {
       logger.warn('Cache clear failed:', cacheError.message);
     }
 
-    // ✅ ENHANCED RESPONSE WITH SMS STATUS
+    // ✅ ENHANCED RESPONSE WITH SMS STATUS AND PHONE INFO
     res.status(201).json({
       status: 'success',
       message: smsResult?.success ? 
-        'Booking berhasil dibuat. SMS pengingat pembayaran telah dikirim.' :
-        'Booking berhasil dibuat. SMS tidak dapat dikirim, silakan cek nomor telepon Anda.',
+        'Booking berhasil dibuat. SMS pengingat pembayaran telah dikirim ke WhatsApp Anda.' :
+        `Booking berhasil dibuat. SMS tidak dapat dikirim: ${smsError?.message || 'Unknown error'}`,
       data: {
         booking: {
           id: newBooking._id,
@@ -220,7 +235,7 @@ export const createBooking = async (req, res) => {
             id: newBooking.pelanggan._id,
             name: newBooking.pelanggan.name,
             email: newBooking.pelanggan.email,
-            phone: newBooking.pelanggan.phoneNumber || newBooking.pelanggan.phone
+            phone: newBooking.pelanggan.phone || newBooking.pelanggan.phoneNumber
           },
           tanggal_booking: bookingDate,
           jam_booking: newBooking.jam_booking,
@@ -235,7 +250,8 @@ export const createBooking = async (req, res) => {
           sms_sent: !!smsResult?.success,
           sms_status: smsResult?.status || 'failed',
           sms_error: smsError?.message || null,
-          message_sid: smsResult?.messageSid || null
+          message_sid: smsResult?.messageSid || smsResult?.sid || null,
+          phone_used: user.phone || user.phoneNumber || null
         }
       }
     });
@@ -273,15 +289,18 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// ✅ ADD: Test SMS endpoint
+// ✅ ENHANCED: Test SMS with proper error handling
 export const testSMS = async (req, res) => {
   try {
     const { phone, message, testType = 'basic' } = req.body;
     
-    if (!phone) {
+    // Get user phone if not provided
+    const targetPhone = phone || (await User.findById(req.user._id)).phone || (await User.findById(req.user._id)).phoneNumber;
+    
+    if (!targetPhone) {
       return res.status(400).json({
         status: 'error',
-        message: 'Phone number is required'
+        message: 'Nomor telepon harus diisi atau tidak ditemukan di profil'
       });
     }
 
@@ -294,55 +313,51 @@ export const testSMS = async (req, res) => {
 
 📋 Test Booking:
 • ID: TEST-${Date.now()}
-• Lapangan: Test Court
+• Lapangan: Test Court Premium
 • Tanggal: ${new Date().toLocaleDateString('id-ID')}
-• Waktu: 20:00 - 21:00
-• Total: Rp 100.000
+• Waktu: 20:00 - 21:00 (1 jam)
+• Total: Rp 250.000
 
 ⚠️ INI ADALAH PESAN TEST
 Status: TESTING
 
-Terima kasih! 🙏`;
+Jika Anda menerima pesan ini, konfigurasi SMS/WhatsApp berfungsi dengan baik! ✅
+
+Terima kasih! 🙏
+- Tim DSC`;
           break;
         default:
           testMessage = `🏟️ DIAZ SPORT CENTER
 
-Test SMS dari sistem booking DSC.
+Test SMS/WhatsApp dari sistem booking DSC.
 Waktu: ${new Date().toLocaleString('id-ID')}
 
-Jika Anda menerima pesan ini, konfigurasi SMS berfungsi dengan baik! ✅
+Jika Anda menerima pesan ini, konfigurasi berfungsi dengan baik! ✅
 
-Terima kasih! 🙏`;
+Terima kasih! 🙏
+- Tim DSC`;
       }
     }
 
-    // Import the SMS function directly
-    const { sendSMS, formatPhoneNumber } = await import('../config/twilio.js');
-    const formattedPhone = formatPhoneNumber(phone);
-    
-    logger.info('Sending test SMS:', {
-      to: formattedPhone,
-      testType: testType,
-      userId: req.user?._id
-    });
-
-    const result = await sendSMS(formattedPhone, testMessage);
+    // Use NotificationService directly
+    const result = await NotificationService.sendTestMessage(targetPhone, testMessage);
     
     if (result.success) {
       res.json({
         status: 'success',
-        message: 'Test SMS sent successfully',
+        message: 'Test SMS/WhatsApp berhasil dikirim',
         data: {
-          phone: formattedPhone,
-          messageSid: result.messageSid,
-          status: result.status,
-          testType: testType
+          phone: result.formattedPhone || targetPhone,
+          messageSid: result.messageSid || result.sid,
+          status: result.status || 'sent',
+          testType: testType,
+          method: result.method || 'sms'
         }
       });
     } else {
       res.status(500).json({
         status: 'error',
-        message: 'Failed to send test SMS',
+        message: 'Gagal mengirim test SMS/WhatsApp',
         error: result.error,
         code: result.code
       });
@@ -357,31 +372,37 @@ Terima kasih! 🙏`;
     
     res.status(500).json({
       status: 'error',
-      message: 'Failed to send test SMS',
+      message: 'Gagal mengirim test SMS/WhatsApp',
       error: error.message
     });
   }
 };
 
-// ✅ ADD: Check SMS configuration
+// ✅ ENHANCED: Check SMS configuration
 export const checkSMSConfig = async (req, res) => {
   try {
     const hasAccountSid = !!process.env.TWILIO_ACCOUNT_SID;
     const hasAuthToken = !!process.env.TWILIO_AUTH_TOKEN;
     const hasPhoneNumber = !!process.env.TWILIO_PHONE_NUMBER;
     
+    // Get current user phone
+    const user = await User.findById(req.user._id);
+    const userPhone = user?.phone || user?.phoneNumber;
+    
     const configStatus = {
-      configured: hasAccountSid && hasAuthToken && hasPhoneNumber,
+      twilio_configured: hasAccountSid && hasAuthToken && hasPhoneNumber,
+      user_phone_available: !!userPhone,
       details: {
         account_sid: hasAccountSid ? 'Configured' : 'Missing',
         auth_token: hasAuthToken ? 'Configured' : 'Missing',
-        phone_number: hasPhoneNumber ? process.env.TWILIO_PHONE_NUMBER : 'Missing'
+        twilio_phone: hasPhoneNumber ? process.env.TWILIO_PHONE_NUMBER : 'Missing',
+        user_phone: userPhone || 'Not set in profile'
       }
     };
 
     res.json({
       status: 'success',
-      message: 'SMS configuration status',
+      message: 'Konfigurasi SMS/WhatsApp',
       data: configStatus
     });
 
@@ -389,12 +410,12 @@ export const checkSMSConfig = async (req, res) => {
     logger.error('Check SMS config error:', error);
     res.status(500).json({
       status: 'error',
-      message: 'Failed to check SMS configuration'
+      message: 'Gagal mengecek konfigurasi SMS'
     });
   }
 };
 
-// ✅ KEEP: All existing functions...
+// ✅ KEEP: All other existing functions unchanged...
 export const getAvailability = async (req, res) => {
   try {
     const { lapangan, tanggal, jam, durasi } = req.query;

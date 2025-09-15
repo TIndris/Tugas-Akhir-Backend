@@ -35,39 +35,35 @@ export const getProfile = async (req, res) => {
 
 export const updateProfile = async (req, res) => {
   try {
-    const { name, phone } = req.body;
     const userId = req.user._id;
+    const updateData = req.body;
 
-    const updateData = {};
+    // ✅ ALLOW PHONE FIELD UPDATES
+    const allowedFields = ['name', 'email', 'phone', 'phoneNumber', 'dateOfBirth', 'address'];
+    const filteredData = {};
     
-    if (name !== undefined) {
-      updateData.name = name;
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        filteredData[field] = updateData[field];
+      }
+    });
+
+    // ✅ SYNC PHONE FIELDS
+    if (filteredData.phone) {
+      filteredData.phoneNumber = filteredData.phone;
     }
-    
-    if (phone !== undefined) {
-      updateData.phone = phone;
+    if (filteredData.phoneNumber) {
+      filteredData.phone = filteredData.phoneNumber;
     }
 
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { ...updateData, updatedAt: new Date() },
+      filteredData,
       { new: true, runValidators: true }
-    );
+    ).select('-password');
 
-    if (!updatedUser) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'User not found'
-      });
-    }
-
-    logger.info('Profile updated successfully', {
-      userId: updatedUser._id,
-      email: updatedUser.email,
-      changes: updateData
-    });
-
-    res.status(200).json({
+    // ✅ ENHANCED RESPONSE WITH PHONE
+    res.json({
       status: 'success',
       message: 'Profile updated successfully',
       data: {
@@ -75,7 +71,8 @@ export const updateProfile = async (req, res) => {
           id: updatedUser._id,
           name: updatedUser.name,
           email: updatedUser.email,
-          phone: updatedUser.phone,
+          phone: updatedUser.phone || updatedUser.phoneNumber, // ✅ INCLUDE PHONE
+          phoneNumber: updatedUser.phoneNumber || updatedUser.phone, // ✅ INCLUDE ALIAS
           role: updatedUser.role,
           authProvider: updatedUser.authProvider,
           isEmailVerified: updatedUser.isEmailVerified,
@@ -87,18 +84,9 @@ export const updateProfile = async (req, res) => {
 
   } catch (error) {
     logger.error('Update profile error:', error);
-    
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Validation error',
-        errors: Object.values(error.errors).map(err => err.message)
-      });
-    }
-
     res.status(500).json({
       status: 'error',
-      message: 'Error updating profile'
+      message: 'Gagal memperbarui profil'
     });
   }
 };

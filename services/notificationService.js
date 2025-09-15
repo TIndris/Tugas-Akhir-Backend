@@ -4,164 +4,246 @@ import moment from 'moment-timezone';
 
 class NotificationService {
   
-  // Format currency to IDR
-  static formatCurrency(amount) {
-    return new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0
-    }).format(amount);
-  }
-
-  // Send payment reminder after booking creation
+  // ✅ ENHANCED: sendPaymentReminder
   static async sendPaymentReminder(booking, user) {
     try {
-      if (!user.phoneNumber) {
-        logger.warn('User has no phone number for SMS notification:', user._id);
-        return { success: false, error: 'No phone number' };
+      const formattedPhone = formatPhoneNumber(user.phone || user.phoneNumber);
+      
+      if (!formattedPhone) {
+        throw new Error(`Nomor telepon tidak valid: ${user.phone || user.phoneNumber}`);
       }
 
-      const phoneNumber = formatPhoneNumber(user.phoneNumber);
-      const bookingDate = moment(booking.date).tz('Asia/Jakarta').format('DD/MM/YYYY');
-      const timeSlot = `${booking.startTime} - ${booking.endTime}`;
-      const totalAmount = this.formatCurrency(booking.totalAmount);
+      // Get booking details with flexible field access
+      const fieldName = booking.lapangan?.nama || booking.fieldId?.name || 'Lapangan';
+      const bookingDate = moment(booking.tanggal_booking || booking.date).format('DD/MM/YYYY');
+      const bookingTime = booking.jam_booking || booking.startTime;
+      const duration = booking.durasi || booking.duration;
+      const amount = new Intl.NumberFormat('id-ID', { 
+        style: 'currency', 
+        currency: 'IDR' 
+      }).format(booking.harga || booking.totalAmount);
 
       const message = `🏟️ DIAZ SPORT CENTER
-      
-Booking berhasil dibuat!
+Booking Confirmation
 
-📋 Detail Booking:
-• ID: ${booking.bookingId}
-• Lapangan: ${booking.fieldId?.name || 'N/A'}
-• Tanggal: ${bookingDate}
-• Waktu: ${timeSlot}
-• Total: ${totalAmount}
+Halo ${user.name}! 👋
 
-⚠️ PENTING: Silakan lakukan pembayaran dalam 10 MENIT
-Status: ${booking.status}
+✅ Booking Anda berhasil dibuat:
+📍 Lapangan: ${fieldName}
+📅 Tanggal: ${bookingDate}
+⏰ Waktu: ${bookingTime} (${duration} jam)
+💰 Total: ${amount}
+🆔 ID Booking: ${booking.bookingId}
 
-Terima kasih telah memilih Diaz Sport Center! 🙏`;
+⚠️ Status: PENDING PAYMENT
+⏰ Batas Pembayaran: 24 jam dari sekarang
 
-      const result = await sendSMS(phoneNumber, message);
-      
+Silakan lakukan pembayaran untuk mengkonfirmasi booking Anda. 
+
+Terima kasih telah memilih DSC! 🙏
+
+---
+DIAZ SPORT CENTER
+"Your Sports, Our Priority"`;
+
+      logger.info('Sending payment reminder SMS/WhatsApp:', {
+        to: formattedPhone,
+        bookingId: booking.bookingId,
+        userName: user.name,
+        fieldName,
+        bookingDate,
+        bookingTime
+      });
+
+      const result = await sendSMS(formattedPhone, message);
+
       if (result.success) {
-        logger.info('Payment reminder SMS sent:', {
-          bookingId: booking.bookingId,
-          userId: user._id,
-          phone: phoneNumber
+        logger.info('Payment reminder sent successfully:', {
+          messageSid: result.messageSid,
+          status: result.status,
+          to: formattedPhone,
+          bookingId: booking.bookingId
         });
+
+        return {
+          success: true,
+          messageSid: result.messageSid,
+          status: result.status,
+          phone: formattedPhone
+        };
+      } else {
+        throw new Error(result.error || 'Failed to send SMS');
       }
 
-      return result;
-
     } catch (error) {
-      logger.error('Error sending payment reminder SMS:', {
+      logger.error('Payment reminder SMS failed:', {
         error: error.message,
-        bookingId: booking.bookingId,
+        bookingId: booking.bookingId || booking._id,
+        userPhone: user.phone || user.phoneNumber,
         userId: user._id
       });
-      return { success: false, error: error.message };
+
+      throw error;
     }
   }
 
-  // Send preparation reminder 1 hour before booking start
-  static async sendPreparationReminder(booking, user) {
+  // ✅ ADD: Test message function
+  static async sendTestMessage(phone, message) {
     try {
-      if (!user.phoneNumber) {
-        logger.warn('User has no phone number for SMS notification:', user._id);
-        return { success: false, error: 'No phone number' };
-      }
-
-      const phoneNumber = formatPhoneNumber(user.phoneNumber);
-      const bookingDate = moment(booking.date).tz('Asia/Jakarta').format('DD/MM/YYYY');
-      const timeSlot = `${booking.startTime} - ${booking.endTime}`;
-
-      const message = `🏟️ DIAZ SPORT CENTER
-
-⏰ REMINDER: Booking Anda dimulai 1 jam lagi!
-
-📋 Detail Booking:
-• ID: ${booking.bookingId}
-• Lapangan: ${booking.fieldId?.name || 'N/A'}
-• Tanggal: ${bookingDate}  
-• Waktu: ${timeSlot}
-• Status: ${booking.status}
-
-🎯 Silakan bersiap-siap dan datang tepat waktu!
-Alamat: [Alamat Diaz Sport Center]
-
-Selamat bermain! 🏃‍♂️⚽`;
-
-      const result = await sendSMS(phoneNumber, message);
+      const formattedPhone = formatPhoneNumber(phone);
       
-      if (result.success) {
-        logger.info('Preparation reminder SMS sent:', {
-          bookingId: booking.bookingId,
-          userId: user._id,
-          phone: phoneNumber
-        });
+      if (!formattedPhone) {
+        throw new Error(`Nomor telepon tidak valid: ${phone}`);
       }
 
-      return result;
+      logger.info('Sending test message:', {
+        to: formattedPhone,
+        messageLength: message.length
+      });
+
+      const result = await sendSMS(formattedPhone, message);
+
+      if (result.success) {
+        logger.info('Test message sent successfully:', {
+          messageSid: result.messageSid,
+          status: result.status,
+          to: formattedPhone
+        });
+
+        return {
+          success: true,
+          messageSid: result.messageSid,
+          status: result.status,
+          formattedPhone: formattedPhone
+        };
+      } else {
+        throw new Error(result.error || 'Failed to send test message');
+      }
 
     } catch (error) {
-      logger.error('Error sending preparation reminder SMS:', {
+      logger.error('Test message failed:', {
         error: error.message,
-        bookingId: booking.bookingId,
-        userId: user._id
+        phone: phone
       });
-      return { success: false, error: error.message };
+
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 
-  // Send booking confirmation after payment verification
+  // ✅ ENHANCED: sendBookingConfirmation
   static async sendBookingConfirmation(booking, user) {
     try {
-      if (!user.phoneNumber) {
-        logger.warn('User has no phone number for SMS notification:', user._id);
-        return { success: false, error: 'No phone number' };
-      }
-
-      const phoneNumber = formatPhoneNumber(user.phoneNumber);
-      const bookingDate = moment(booking.date).tz('Asia/Jakarta').format('DD/MM/YYYY');
-      const timeSlot = `${booking.startTime} - ${booking.endTime}`;
-      const totalAmount = this.formatCurrency(booking.totalAmount);
-
-      const message = `🏟️ DIAZ SPORT CENTER
-
-✅ PEMBAYARAN BERHASIL DIKONFIRMASI!
-
-📋 Detail Booking:
-• ID: ${booking.bookingId}
-• Lapangan: ${booking.fieldId?.name || 'N/A'}
-• Tanggal: ${bookingDate}
-• Waktu: ${timeSlot}
-• Total: ${totalAmount}
-• Status: CONFIRMED
-
-🎉 Booking Anda telah dikonfirmasi. Sampai jumpa di lapangan!
-
-Terima kasih! 🙏`;
-
-      const result = await sendSMS(phoneNumber, message);
+      const formattedPhone = formatPhoneNumber(user.phone || user.phoneNumber);
       
-      if (result.success) {
-        logger.info('Booking confirmation SMS sent:', {
-          bookingId: booking.bookingId,
-          userId: user._id,
-          phone: phoneNumber
-        });
+      if (!formattedPhone) {
+        throw new Error(`Nomor telepon tidak valid: ${user.phone || user.phoneNumber}`);
       }
 
-      return result;
+      const fieldName = booking.lapangan?.nama || booking.fieldId?.name || 'Lapangan';
+      const bookingDate = moment(booking.tanggal_booking || booking.date).format('DD/MM/YYYY');
+      const bookingTime = booking.jam_booking || booking.startTime;
+
+      const message = `✅ BOOKING DIKONFIRMASI
+DIAZ SPORT CENTER
+
+Halo ${user.name}! 🎉
+
+Booking Anda telah DIKONFIRMASI:
+📍 ${fieldName}
+📅 ${bookingDate}
+⏰ ${bookingTime}
+🆔 ${booking.bookingId}
+
+Status: CONFIRMED ✅
+
+📝 Catatan Penting:
+• Datang 15 menit sebelum jadwal
+• Bawa sepatu olahraga
+• Patuhi protokol kesehatan
+
+Selamat bermain! 🏟️⚽
+
+---
+DIAZ SPORT CENTER
+"Your Sports, Our Priority"`;
+
+      const result = await sendSMS(formattedPhone, message);
+
+      if (result.success) {
+        logger.info('Booking confirmation sent:', {
+          messageSid: result.messageSid,
+          to: formattedPhone,
+          bookingId: booking.bookingId
+        });
+
+        return {
+          success: true,
+          messageSid: result.messageSid,
+          status: result.status
+        };
+      } else {
+        throw new Error(result.error || 'Failed to send confirmation');
+      }
 
     } catch (error) {
-      logger.error('Error sending booking confirmation SMS:', {
+      logger.error('Booking confirmation SMS failed:', {
         error: error.message,
-        bookingId: booking.bookingId,
-        userId: user._id
+        bookingId: booking.bookingId
       });
-      return { success: false, error: error.message };
+
+      throw error;
+    }
+  }
+
+  // ✅ ENHANCED: sendPreparationReminder
+  static async sendPreparationReminder(booking, user) {
+    try {
+      const formattedPhone = formatPhoneNumber(user.phone || user.phoneNumber);
+      
+      if (!formattedPhone) {
+        throw new Error(`Nomor telepon tidak valid: ${user.phone || user.phoneNumber}`);
+      }
+
+      const fieldName = booking.lapangan?.nama || booking.fieldId?.name || 'Lapangan';
+      const bookingTime = booking.jam_booking || booking.startTime;
+
+      const message = `⏰ PENGINGAT BERMAIN
+DIAZ SPORT CENTER
+
+Halo ${user.name}! 
+
+🚨 Booking Anda 1 jam lagi!
+📍 ${fieldName}
+⏰ ${bookingTime}
+🆔 ${booking.bookingId}
+
+Bersiap-siaplah! 🏃‍♂️⚽
+
+Sampai jumpa di lapangan! 🏟️
+
+---
+DIAZ SPORT CENTER`;
+
+      const result = await sendSMS(formattedPhone, message);
+
+      if (result.success) {
+        logger.info('Preparation reminder sent:', {
+          messageSid: result.messageSid,
+          to: formattedPhone,
+          bookingId: booking.bookingId
+        });
+
+        return result;
+      } else {
+        throw new Error(result.error || 'Failed to send reminder');
+      }
+
+    } catch (error) {
+      logger.error('Preparation reminder SMS failed:', error);
+      throw error;
     }
   }
 }
