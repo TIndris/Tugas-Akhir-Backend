@@ -248,25 +248,31 @@ bookingSchema.pre('save', validateBookingDateRange);
 bookingSchema.pre('save', validateBookingTimeFormat);
 bookingSchema.pre('save', validateBookingDurationRange);
 
-// ✅ ENHANCE: Middleware untuk mengecek ketersediaan lapangan
+// ✅ SIMPLIFIED: Middleware untuk mengecek ketersediaan lapangan
 bookingSchema.pre('save', async function(next) {
   try {
+    // Skip validation for updates that don't change booking details
+    if (!this.isNew && !this.isModified('tanggal_booking') && !this.isModified('jam_booking') && !this.isModified('lapangan')) {
+      return next();
+    }
+
     // Get field details for operational hours check
-    const fieldId = this.lapangan || this.fieldId;
+    const fieldId = this.lapangan;
     const field = await mongoose.model('Field').findById(fieldId);
     
     if (!field) {
       throw new Error('Lapangan tidak ditemukan');
     }
 
-    if (field.status !== 'tersedia' && field.isAvailable !== true) {
+    // Check field availability
+    if (field.status && field.status !== 'tersedia' && field.isAvailable === false) {
       throw new Error(`Lapangan sedang ${field.status} dan tidak dapat dibooking`);
     }
 
     // Parse booking time and operational hours
-    const bookingTime = this.jam_booking || this.startTime;
+    const bookingTime = this.jam_booking;
     const bookingHour = parseInt(bookingTime.split(':')[0]);
-    const bookingDuration = this.durasi || this.duration;
+    const bookingDuration = this.durasi;
     
     // Handle different field hour formats
     const closeHour = field.jam_tutup ? 
@@ -290,32 +296,44 @@ bookingSchema.pre('save', async function(next) {
       throw new Error(`Durasi melebihi jam tutup lapangan (${closeTime})`);
     }
 
-    // Check slot availability
+    // ✅ FIXED: Simplified slot availability check
     if (this.isNew || this.isModified('tanggal_booking') || this.isModified('jam_booking')) {
-      const bookingDate = this.tanggal_booking || new Date(this.date);
+      // Calculate end time
+      const startMoment = moment(bookingTime, 'HH:mm');
+      const endMoment = startMoment.clone().add(bookingDuration, 'hours');
+      const endTime = endMoment.format('HH:mm');
+
+      // Format booking date consistently
+      const bookingDate = moment(this.tanggal_booking).format('YYYY-MM-DD');
       
-      const existingBooking = await this.constructor.findOne({
-        $or: [
-          { lapangan: fieldId },
-          { fieldId: fieldId }
-        ],
-        $or: [
-          { tanggal_booking: bookingDate },
-          { date: moment(bookingDate).format('YYYY-MM-DD') }
-        ],
-        $or: [
-          { jam_booking: bookingTime },
-          { startTime: bookingTime }
-        ],
+      // ✅ SIMPLIFIED CONFLICT CHECK - Only check exact matches and overlaps
+      const conflictingBookings = await this.constructor.find({
+        lapangan: fieldId,
+        tanggal_booking: {
+          $gte: moment(bookingDate).startOf('day').toDate(),
+          $lte: moment(bookingDate).endOf('day').toDate()
+        },
         _id: { $ne: this._id },
-        $or: [
-          { status_pemesanan: { $in: ['pending', 'confirmed'] } },
-          { status: { $in: ['pending', 'confirmed'] } }
-        ]
+        status_pemesanan: { $in: ['pending', 'confirmed'] }
       });
 
-      if (existingBooking) {
-        throw new Error('Lapangan sudah dibooking pada waktu tersebut');
+      // Check for time conflicts manually
+      for (const existingBooking of conflictingBookings) {
+        const existingStart = moment(existingBooking.jam_booking, 'HH:mm');
+        const existingEnd = existingStart.clone().add(existingBooking.durasi, 'hours');
+        
+        const newStart = moment(bookingTime, 'HH:mm');
+        const newEnd = moment(endTime, 'HH:mm');
+
+        // Check if times overlap
+        const hasOverlap = (
+          (newStart.isBefore(existingEnd) && newEnd.isAfter(existingStart)) ||
+          (existingStart.isBefore(newEnd) && existingEnd.isAfter(newStart))
+        );
+
+        if (hasOverlap) {
+          throw new Error(`Lapangan sudah dibooking pada waktu ${existingBooking.jam_booking} - ${existingEnd.format('HH:mm')}`);
+        }
       }
     }
 
@@ -342,59 +360,100 @@ bookingSchema.index({ status: 1 });
 bookingSchema.index({ bookingId: 1 });
 bookingSchema.index({ payment_status: 1, createdAt: 1 });
 
-// ✅ KEEP: Static methods
-bookingSchema.statics.checkAvailability = async function(fieldId, date, time) {
-  const existingBooking = await this.findOne({
-    $or: [
-      { lapangan: fieldId },
-      { fieldId: fieldId }
-    ],
-    $or: [
-      { tanggal_booking: new Date(date) },
-      { date: date }
-    ],
-    $or: [
-      { jam_booking: time },
-      { startTime: time }
-    ],
-    $or: [
-      { status_pemesanan: { $in: ['pending', 'confirmed'] } },
-      { status: { $in: ['pending', 'confirmed'] } }
-    ]
-  });
-  return !existingBooking;
+// ✅ ENHANCED: Static methods with better conflict detection
+bookingSchema.statics.checkAvailability = async function(fieldId, date, time, duration = 1) {
+  try {
+    // Calculate end time
+    const startMoment = moment(time, 'HH:mm');
+    const endMoment = startMoment.clone().add(duration, 'hours');
+    
+    // Format date consistently
+    const bookingDate = moment(date).format('YYYY-MM-DD');
+    
+    const conflictingBookings = await this.find({
+      lapangan: fieldId,
+      tanggal_booking: {
+        $gte: moment(bookingDate).startOf('day').toDate(),
+        $lte: moment(bookingDate).endOf('day').toDate()
+      },
+      status_pemesanan: { $in: ['pending', 'confirmed'] }
+    });
+
+    // Check for time conflicts
+    for (const existingBooking of conflictingBookings) {
+      const existingStart = moment(existingBooking.jam_booking, 'HH:mm');
+      const existingEnd = existingStart.clone().add(existingBooking.durasi, 'hours');
+      
+      const newStart = moment(time, 'HH:mm');
+      const newEnd = endMoment;
+
+      // Check if times overlap
+      const hasOverlap = (
+        (newStart.isBefore(existingEnd) && newEnd.isAfter(existingStart)) ||
+        (existingStart.isBefore(newEnd) && existingEnd.isAfter(newStart))
+      );
+
+      if (hasOverlap) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error checking availability:', error);
+    return false;
+  }
 };
 
 bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
+  const bookingDate = moment(date).format('YYYY-MM-DD');
+  
   return await this.find({
-    $or: [
-      { lapangan: fieldId },
-      { fieldId: fieldId }
-    ],
-    $or: [
-      { tanggal_booking: new Date(date) },
-      { date: date }
-    ],
-    $or: [
-      { status_pemesanan: { $in: ['pending', 'confirmed'] } },
-      { status: { $in: ['pending', 'confirmed'] } }
-    ]
-  }).select('jam_booking startTime pelanggan userId');
+    lapangan: fieldId,
+    tanggal_booking: {
+      $gte: moment(bookingDate).startOf('day').toDate(),
+      $lte: moment(bookingDate).endOf('day').toDate()
+    },
+    status_pemesanan: { $in: ['pending', 'confirmed'] }
+  }).select('jam_booking durasi pelanggan status_pemesanan');
 };
 
-// ✅ ADD: Additional static methods for controller compatibility
+// ✅ ENHANCED: Additional static methods for controller compatibility
 bookingSchema.statics.findByBookingId = async function(bookingId) {
   return await this.findOne({
     $or: [
-      { _id: bookingId },
+      { _id: mongoose.Types.ObjectId.isValid(bookingId) ? bookingId : null },
       { bookingId: bookingId }
     ]
   }).populate([
     { path: 'pelanggan', select: 'name email phoneNumber' },
-    { path: 'userId', select: 'name email phoneNumber' },
-    { path: 'lapangan', select: 'name pricePerHour images location facilities' },
-    { path: 'fieldId', select: 'name pricePerHour images location facilities' }
+    { path: 'lapangan', select: 'nama harga images location' }
   ]);
+};
+
+// ✅ ADD: Manual pagination method (replace mongoose-paginate-v2)
+bookingSchema.statics.paginate = function(query = {}, options = {}) {
+  const { page = 1, limit = 10, sort = { createdAt: -1 }, populate = [] } = options;
+  const skip = (page - 1) * limit;
+  
+  return Promise.all([
+    this.find(query)
+      .populate(populate)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit),
+    this.countDocuments(query)
+  ]).then(([docs, totalDocs]) => ({
+    docs,
+    totalDocs,
+    limit,
+    page,
+    totalPages: Math.ceil(totalDocs / limit),
+    hasNextPage: page < Math.ceil(totalDocs / limit),
+    hasPrevPage: page > 1,
+    nextPage: page < Math.ceil(totalDocs / limit) ? page + 1 : null,
+    prevPage: page > 1 ? page - 1 : null
+  }));
 };
 
 // ✅ KEEP: Export model only
