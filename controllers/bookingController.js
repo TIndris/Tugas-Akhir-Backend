@@ -10,7 +10,7 @@ import User from '../models/User.js';
 import Field from '../models/Field.js';
 import moment from 'moment-timezone';
 
-// ✅ FIXED: createBooking with direct model creation (bypass service layer)
+// ✅ ENHANCED: createBooking with better SMS integration
 export const createBooking = async (req, res) => {
   let newBooking = null;
   
@@ -43,7 +43,7 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    // ✅ MANUAL CONFLICT CHECK (bypass model middleware)
+    // Manual conflict check
     const bookingDate = moment(tanggal_booking).format('YYYY-MM-DD');
     const startTime = moment(jam_booking, 'HH:mm');
     const endTime = startTime.clone().add(durasi, 'hours');
@@ -82,8 +82,7 @@ export const createBooking = async (req, res) => {
               time_range: `${existingBooking.jam_booking} - ${existingEnd.format('HH:mm')}`,
               status: existingBooking.status_pemesanan,
               customer: existingBooking.pelanggan
-            },
-            total_existing_bookings: conflictingBookings.length
+            }
           }
         });
       }
@@ -97,7 +96,7 @@ export const createBooking = async (req, res) => {
     const random = Math.random().toString(36).substr(2, 5);
     const bookingId = `DSC-${timestamp}-${random}`.toUpperCase();
 
-    // ✅ CREATE BOOKING DIRECTLY (bypass pre-save middleware)
+    // Create booking
     const bookingData = {
       pelanggan: req.user._id,
       lapangan: lapangan_id,
@@ -114,13 +113,12 @@ export const createBooking = async (req, res) => {
       confirmationSent: false
     };
 
-    // Create without running pre-save middleware
     newBooking = await Booking.create(bookingData);
 
     // Populate references
     await newBooking.populate([
       { path: 'lapangan', select: 'nama harga pricePerHour images location' },
-      { path: 'pelanggan', select: 'name email phoneNumber' }
+      { path: 'pelanggan', select: 'name email phoneNumber phone' }
     ]);
 
     logger.info('Booking created successfully:', {
@@ -132,27 +130,66 @@ export const createBooking = async (req, res) => {
       amount: totalAmount
     });
 
-    // ✅ SEND SMS NOTIFICATION
+    // ✅ ENHANCED SMS NOTIFICATION WITH DETAILED ERROR HANDLING
+    let smsResult = null;
+    let smsError = null;
+
     try {
       const user = await User.findById(req.user._id);
-      if (user && user.phoneNumber) {
-        await NotificationService.sendPaymentReminder(newBooking, user);
-        
+      
+      logger.info('Attempting to send SMS notification:', {
+        userId: req.user._id,
+        userName: user?.name,
+        userPhone: user?.phoneNumber || user?.phone,
+        bookingId: newBooking.bookingId
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      const userPhone = user.phoneNumber || user.phone;
+      if (!userPhone) {
+        throw new Error('User has no phone number');
+      }
+
+      // ✅ CREATE COMPATIBLE BOOKING OBJECT FOR SMS
+      const bookingForSMS = {
+        bookingId: newBooking.bookingId,
+        date: newBooking.tanggal_booking,
+        startTime: newBooking.jam_booking,
+        endTime: endTime.format('HH:mm'),
+        totalAmount: newBooking.harga,
+        status: newBooking.status_pemesanan,
+        fieldId: {
+          name: newBooking.lapangan?.nama || field.nama
+        }
+      };
+
+      // Send payment reminder
+      smsResult = await NotificationService.sendPaymentReminder(bookingForSMS, user);
+      
+      if (smsResult.success) {
         newBooking.paymentReminderSent = true;
-        await newBooking.save({ validateBeforeSave: false }); // Skip validation
+        await newBooking.save({ validateBeforeSave: false });
         
         logger.info('Payment reminder SMS sent successfully:', {
           bookingId: newBooking.bookingId,
           userId: req.user._id,
-          phone: user.phoneNumber
+          phone: userPhone,
+          messageSid: smsResult.messageSid
         });
       } else {
-        logger.warn('User has no phone number for SMS notification:', req.user._id);
+        throw new Error(smsResult.error || 'SMS sending failed');
       }
-    } catch (smsError) {
-      logger.warn('Failed to send payment reminder SMS:', {
-        error: smsError.message,
-        bookingId: newBooking.bookingId
+
+    } catch (error) {
+      smsError = error;
+      logger.error('Failed to send payment reminder SMS:', {
+        error: error.message,
+        bookingId: newBooking.bookingId,
+        userId: req.user._id,
+        userPhone: user?.phoneNumber || user?.phone
       });
     }
 
@@ -164,9 +201,12 @@ export const createBooking = async (req, res) => {
       logger.warn('Cache clear failed:', cacheError.message);
     }
 
+    // ✅ ENHANCED RESPONSE WITH SMS STATUS
     res.status(201).json({
       status: 'success',
-      message: 'Booking berhasil dibuat. SMS pengingat pembayaran telah dikirim.',
+      message: smsResult?.success ? 
+        'Booking berhasil dibuat. SMS pengingat pembayaran telah dikirim.' :
+        'Booking berhasil dibuat. SMS tidak dapat dikirim, silakan cek nomor telepon Anda.',
       data: {
         booking: {
           id: newBooking._id,
@@ -179,7 +219,8 @@ export const createBooking = async (req, res) => {
           user: {
             id: newBooking.pelanggan._id,
             name: newBooking.pelanggan.name,
-            email: newBooking.pelanggan.email
+            email: newBooking.pelanggan.email,
+            phone: newBooking.pelanggan.phoneNumber || newBooking.pelanggan.phone
           },
           tanggal_booking: bookingDate,
           jam_booking: newBooking.jam_booking,
@@ -188,6 +229,13 @@ export const createBooking = async (req, res) => {
           status_pemesanan: newBooking.status_pemesanan,
           payment_status: newBooking.payment_status,
           createdAt: newBooking.createdAt
+        },
+        // ✅ ADD: SMS notification status
+        notification: {
+          sms_sent: !!smsResult?.success,
+          sms_status: smsResult?.status || 'failed',
+          sms_error: smsError?.message || null,
+          message_sid: smsResult?.messageSid || null
         }
       }
     });
@@ -211,14 +259,6 @@ export const createBooking = async (req, res) => {
       }
     }
 
-    if (error.message.includes('Cast to ObjectId failed')) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'ID lapangan tidak valid',
-        error_code: 'INVALID_OBJECT_ID'
-      });
-    }
-
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat membuat booking',
@@ -233,7 +273,128 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// ✅ KEEP: All existing functions unchanged
+// ✅ ADD: Test SMS endpoint
+export const testSMS = async (req, res) => {
+  try {
+    const { phone, message, testType = 'basic' } = req.body;
+    
+    if (!phone) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Phone number is required'
+      });
+    }
+
+    let testMessage = message;
+    
+    if (!testMessage) {
+      switch (testType) {
+        case 'booking':
+          testMessage = `🏟️ DIAZ SPORT CENTER - TEST
+
+📋 Test Booking:
+• ID: TEST-${Date.now()}
+• Lapangan: Test Court
+• Tanggal: ${new Date().toLocaleDateString('id-ID')}
+• Waktu: 20:00 - 21:00
+• Total: Rp 100.000
+
+⚠️ INI ADALAH PESAN TEST
+Status: TESTING
+
+Terima kasih! 🙏`;
+          break;
+        default:
+          testMessage = `🏟️ DIAZ SPORT CENTER
+
+Test SMS dari sistem booking DSC.
+Waktu: ${new Date().toLocaleString('id-ID')}
+
+Jika Anda menerima pesan ini, konfigurasi SMS berfungsi dengan baik! ✅
+
+Terima kasih! 🙏`;
+      }
+    }
+
+    // Import the SMS function directly
+    const { sendSMS, formatPhoneNumber } = await import('../config/twilio.js');
+    const formattedPhone = formatPhoneNumber(phone);
+    
+    logger.info('Sending test SMS:', {
+      to: formattedPhone,
+      testType: testType,
+      userId: req.user?._id
+    });
+
+    const result = await sendSMS(formattedPhone, testMessage);
+    
+    if (result.success) {
+      res.json({
+        status: 'success',
+        message: 'Test SMS sent successfully',
+        data: {
+          phone: formattedPhone,
+          messageSid: result.messageSid,
+          status: result.status,
+          testType: testType
+        }
+      });
+    } else {
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to send test SMS',
+        error: result.error,
+        code: result.code
+      });
+    }
+
+  } catch (error) {
+    logger.error('Test SMS error:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.user?._id
+    });
+    
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to send test SMS',
+      error: error.message
+    });
+  }
+};
+
+// ✅ ADD: Check SMS configuration
+export const checkSMSConfig = async (req, res) => {
+  try {
+    const hasAccountSid = !!process.env.TWILIO_ACCOUNT_SID;
+    const hasAuthToken = !!process.env.TWILIO_AUTH_TOKEN;
+    const hasPhoneNumber = !!process.env.TWILIO_PHONE_NUMBER;
+    
+    const configStatus = {
+      configured: hasAccountSid && hasAuthToken && hasPhoneNumber,
+      details: {
+        account_sid: hasAccountSid ? 'Configured' : 'Missing',
+        auth_token: hasAuthToken ? 'Configured' : 'Missing',
+        phone_number: hasPhoneNumber ? process.env.TWILIO_PHONE_NUMBER : 'Missing'
+      }
+    };
+
+    res.json({
+      status: 'success',
+      message: 'SMS configuration status',
+      data: configStatus
+    });
+
+  } catch (error) {
+    logger.error('Check SMS config error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to check SMS configuration'
+    });
+  }
+};
+
+// ✅ KEEP: All existing functions...
 export const getAvailability = async (req, res) => {
   try {
     const { lapangan, tanggal, jam, durasi } = req.query;
