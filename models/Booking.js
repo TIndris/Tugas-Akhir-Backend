@@ -11,7 +11,6 @@ import {
 } from '../validators/bookingValidators.js';
 
 const bookingSchema = new mongoose.Schema({
-  // ✅ KEEP: Original fields dengan field names Indonesia
   pelanggan: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -68,7 +67,7 @@ const bookingSchema = new mongoose.Schema({
     type: Date
   },
   
-  // ✅ KEEP: Payment integration fields
+  // Payment integration fields
   payment_status: {
     type: String,
     enum: [
@@ -104,104 +103,20 @@ const bookingSchema = new mongoose.Schema({
     ref: 'User'
   },
   
-  // ✅ KEEP: SMS Notification tracking fields
-  paymentReminderSent: {
-    type: Boolean,
-    default: false
-  },
-  preparationReminderSent: {
-    type: Boolean,
-    default: false
-  },
-  confirmationSent: {
-    type: Boolean,
-    default: false
-  },
-  expiredAt: {
-    type: Date
-  },
-
-  // ✅ ADD: Controller compatibility fields (alias/virtual mapping)
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    get: function() { return this.pelanggan; },
-    set: function(value) { this.pelanggan = value; }
-  },
-  fieldId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Field',
-    get: function() { return this.lapangan; },
-    set: function(value) { this.lapangan = value; }
-  },
-  bookingId: {
-    type: String,
-    unique: true,
-    sparse: true // Allow null values but enforce uniqueness when present
-  },
-  date: {
-    type: String,
-    get: function() { 
-      return moment(this.tanggal_booking).format('YYYY-MM-DD'); 
-    },
-    set: function(value) { 
-      this.tanggal_booking = new Date(value); 
-    }
-  },
-  startTime: {
-    type: String,
-    get: function() { return this.jam_booking; },
-    set: function(value) { this.jam_booking = value; }
-  },
-  endTime: {
-    type: String,
-    get: function() {
-      if (this.jam_booking && this.durasi) {
-        const startMoment = moment(this.jam_booking, 'HH:mm');
-        const endMoment = startMoment.clone().add(this.durasi, 'hours');
-        return endMoment.format('HH:mm');
-      }
-      return null;
-    }
-  },
-  duration: {
-    type: Number,
-    get: function() { return this.durasi; },
-    set: function(value) { this.durasi = value; }
-  },
-  totalAmount: {
-    type: Number,
-    get: function() { return this.harga; },
-    set: function(value) { this.harga = value; }
-  },
-  status: {
-    type: String,
-    get: function() { return this.status_pemesanan; },
-    set: function(value) { this.status_pemesanan = value; }
-  },
-  paymentStatus: {
-    type: String,
-    get: function() { return this.payment_status; },
-    set: function(value) { this.payment_status = value; }
-  },
-  notes: {
-    type: String,
-    get: function() { return this.catatan; },
-    set: function(value) { this.catatan = value; }
-  },
-
-  // ✅ ADD: Additional tracking fields for SMS system
-  cancelledAt: Date,
-  cancelledBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  lastUpdated: Date
-
+  // ❌ REMOVE: SMS tracking fields (karena tidak digunakan lagi)
+  // paymentReminderSent: {
+  //   type: Boolean,
+  //   default: false
+  // },
+  // preparationReminderSent: {
+  //   type: Boolean,
+  //   default: false
+  // },
+  // confirmationSent: {
+  //   type: Boolean,
+  //   default: false
+  // },
+  
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
@@ -221,7 +136,7 @@ bookingSchema.virtual('tanggal_bookingWIB').get(function() {
   return moment(this.tanggal_booking).tz('Asia/Jakarta').format('DD/MM/YYYY');
 });
 
-// ✅ KEEP: Payment status text virtual
+// Payment status text virtual
 bookingSchema.virtual('payment_status_text').get(function() {
   const statusMap = {
     'no_payment': 'Belum Bayar',
@@ -234,7 +149,7 @@ bookingSchema.virtual('payment_status_text').get(function() {
   return statusMap[this.payment_status] || this.payment_status;
 });
 
-// ✅ ADD: Virtual for controller compatibility
+// Virtual for controller compatibility
 bookingSchema.virtual('fieldName').get(function() {
   return this.lapangan?.name || this.fieldId?.name;
 });
@@ -243,12 +158,12 @@ bookingSchema.virtual('customerName').get(function() {
   return this.pelanggan?.name || this.userId?.name;
 });
 
-// ✅ KEEP: Pre-save validations
+// Pre-save validations
 bookingSchema.pre('save', validateBookingDateRange);
 bookingSchema.pre('save', validateBookingTimeFormat);
 bookingSchema.pre('save', validateBookingDurationRange);
 
-// ✅ SIMPLIFIED: Middleware untuk mengecek ketersediaan lapangan
+// Middleware untuk mengecek ketersediaan lapangan
 bookingSchema.pre('save', async function(next) {
   try {
     // Skip validation for updates that don't change booking details
@@ -296,7 +211,7 @@ bookingSchema.pre('save', async function(next) {
       throw new Error(`Durasi melebihi jam tutup lapangan (${closeTime})`);
     }
 
-    // ✅ FIXED: Simplified slot availability check
+    // Simplified slot availability check
     if (this.isNew || this.isModified('tanggal_booking') || this.isModified('jam_booking')) {
       // Calculate end time
       const startMoment = moment(bookingTime, 'HH:mm');
@@ -306,7 +221,7 @@ bookingSchema.pre('save', async function(next) {
       // Format booking date consistently
       const bookingDate = moment(this.tanggal_booking).format('YYYY-MM-DD');
       
-      // ✅ SIMPLIFIED CONFLICT CHECK - Only check exact matches and overlaps
+      // Simplified conflict check - Only check exact matches and overlaps
       const conflictingBookings = await this.constructor.find({
         lapangan: fieldId,
         tanggal_booking: {
@@ -350,7 +265,7 @@ bookingSchema.pre('save', async function(next) {
   }
 });
 
-// ✅ ENHANCE: Indexes untuk performance
+// Indexes untuk performance
 bookingSchema.index({ lapangan: 1, tanggal_booking: 1 });
 bookingSchema.index({ fieldId: 1, date: 1 });
 bookingSchema.index({ pelanggan: 1 });
@@ -360,7 +275,7 @@ bookingSchema.index({ status: 1 });
 bookingSchema.index({ bookingId: 1 });
 bookingSchema.index({ payment_status: 1, createdAt: 1 });
 
-// ✅ ENHANCED: Static methods with better conflict detection
+// Static methods with better conflict detection
 bookingSchema.statics.checkAvailability = async function(fieldId, date, time, duration = 1) {
   try {
     // Calculate end time
@@ -418,7 +333,7 @@ bookingSchema.statics.getBookedSlots = async function(fieldId, date) {
   }).select('jam_booking durasi pelanggan status_pemesanan');
 };
 
-// ✅ ENHANCED: Additional static methods for controller compatibility
+// Additional static methods for controller compatibility
 bookingSchema.statics.findByBookingId = async function(bookingId) {
   return await this.findOne({
     $or: [
@@ -431,7 +346,7 @@ bookingSchema.statics.findByBookingId = async function(bookingId) {
   ]);
 };
 
-// ✅ ADD: Manual pagination method (replace mongoose-paginate-v2)
+// Manual pagination method (replace mongoose-paginate-v2)
 bookingSchema.statics.paginate = function(query = {}, options = {}) {
   const { page = 1, limit = 10, sort = { createdAt: -1 }, populate = [] } = options;
   const skip = (page - 1) * limit;
@@ -456,5 +371,4 @@ bookingSchema.statics.paginate = function(query = {}, options = {}) {
   }));
 };
 
-// ✅ KEEP: Export model only
 export default mongoose.model('Booking', bookingSchema);

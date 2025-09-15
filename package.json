@@ -29,7 +29,6 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
     "redis": "^4.6.8",
-    "twilio": "^5.9.0",
     "validator": "^13.11.0",
     "winston": "^3.10.0"
   },

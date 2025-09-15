@@ -12,9 +12,7 @@ import {
   checkAvailability,
   getAvailability,
   getBookingStatus,
-  getBookingStatusSummary,
-  testSMS,           // ✅ ADD
-  checkSMSConfig     // ✅ ADD
+  getBookingStatusSummary
 } from '../controllers/bookingController.js';
 import { authenticateToken, requireCashierOrAdmin } from '../middleware/auth.js';
 
@@ -26,10 +24,6 @@ router.get('/availability', getAvailability);
 
 // PROTECTED ROUTES - Authentication required
 router.use(authenticateToken);
-
-// ✅ ADD: SMS TEST ROUTES
-router.post('/test-sms', testSMS);
-router.get('/sms-config', checkSMSConfig);
 
 // ADMIN/CASHIER SPECIFIC ROUTES (before general routes)
 router.get('/kasir/all', requireCashierOrAdmin, getAllBookingsForCashier);
