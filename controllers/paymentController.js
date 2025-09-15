@@ -5,6 +5,7 @@ import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
+import NotificationService from '../services/notificationService.js';
 
 export const createPayment = async (req, res) => {
   try {
@@ -673,6 +674,98 @@ export const getBankInfo = async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Terjadi kesalahan saat mengambil informasi bank'
+    });
+  }
+};
+
+export const verifyPayment = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+
+    // Find payment and populate booking
+    const payment = await Payment.findById(paymentId).populate('booking');
+
+    if (!payment) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Payment not found'
+      });
+    }
+
+    // Only admin or the user who made the payment can verify
+    if (req.user.role !== 'admin' && payment.user.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'You do not have permission to verify this payment'
+      });
+    }
+
+    // Update payment status to verified
+    payment.status = 'verified';
+    payment.verified_by = req.user._id;
+    payment.verified_at = new Date();
+
+    await payment.save();
+
+    // Update booking status
+    const booking = payment.booking;
+    booking.status_pemesanan = 'confirmed';
+    booking.payment_status = payment.payment_type === 'full_payment' 
+      ? 'fully_paid' 
+      : 'dp_confirmed';
+    booking.kasir = req.user._id;
+    booking.konfirmasi_at = new Date();
+
+    await booking.save();
+
+    // Clear relevant caches
+    try {
+      if (client && client.isOpen) {
+        await client.del('payments:pending');
+        await client.del(`payments:user:${booking.pelanggan}`);
+        await client.del(`bookings:${booking.pelanggan}`);
+      }
+    } catch (redisError) {
+      logger.warn('Redis cache clear error:', redisError);
+    }
+
+    // Send confirmation SMS if booking is confirmed
+    if (booking.status_pemesanan === 'confirmed') {
+      try {
+        const user = await User.findById(booking.pelanggan);
+        await NotificationService.sendBookingConfirmation(booking, user);
+        
+        booking.confirmationSent = true;
+        await booking.save();
+        
+      } catch (smsError) {
+        logger.warn('Failed to send booking confirmation SMS:', {
+          error: smsError.message,
+          bookingId: booking.bookingId
+        });
+      }
+    }
+
+    res.json({
+      status: 'success',
+      message: 'Payment verified successfully. Confirmation sent via SMS.',
+      data: { booking }
+    });
+
+  } catch (error) {
+    logger.error(`Payment verification error: ${error.message}`, {
+      paymentId: req.params.paymentId,
+      user: req.user?._id
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat verifikasi pembayaran',
+      error_code: 'PAYMENT_VERIFICATION_ERROR',
+      error_details: process.env.NODE_ENV === 'development' ? {
+        message: error.message,
+        stack: error.stack
+      } : 'Contact support'
     });
   }
 };

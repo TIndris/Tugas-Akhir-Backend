@@ -8,6 +8,7 @@ import moment from 'moment-timezone';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 import passport from './config/passport.js';
+import SchedulerService from './services/schedulerService.js';
 
 import connectDB from './config/db.js';
 import { connectRedis } from './config/redis.js'; 
@@ -321,11 +322,15 @@ const initializeApp = async () => {
       }
     }
 
+    // Initialize scheduler for SMS notifications
+    SchedulerService.init();
+
     console.log('DSC Backend Started Successfully!');
     console.log('Environment:', process.env.NODE_ENV);
     console.log('Backend URL:', process.env.BACKEND_URL);
     console.log('Client URL:', process.env.CLIENT_URL);
     console.log('Google OAuth:', !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
+    console.log('Twilio SMS:', !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN));
     console.log('CORS Origins:', getAllowedOrigins());
     console.log('MongoDB Store: Connected');
     

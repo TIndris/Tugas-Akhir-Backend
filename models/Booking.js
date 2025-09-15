@@ -100,6 +100,22 @@ const bookingSchema = new mongoose.Schema({
   rescheduled_by: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
+  },
+  // Add notification tracking fields
+  paymentReminderSent: {
+    type: Boolean,
+    default: false
+  },
+  preparationReminderSent: {
+    type: Boolean,
+    default: false
+  },
+  confirmationSent: {
+    type: Boolean,
+    default: false
+  },
+  expiredAt: {
+    type: Date
   }
 }, {
   timestamps: true,

@@ -2,6 +2,7 @@ import BookingService from '../services/bookingService.js';
 import BookingAnalyticsService from '../services/bookingAnalyticsService.js';
 import BookingStatusService from '../services/bookingStatusService.js';
 import CacheService from '../services/cacheService.js';
+import NotificationService from '../services/notificationService.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 import Booking from '../models/Booking.js';
@@ -34,10 +35,28 @@ export const createBooking = async (req, res) => {
       action: 'CREATE_BOOKING'
     });
 
+    // After successful booking creation, send payment reminder SMS
+    try {
+      const user = await User.findById(req.user._id);
+      await NotificationService.sendPaymentReminder(newBooking, user);
+      
+      newBooking.paymentReminderSent = true;
+      await newBooking.save();
+      
+    } catch (smsError) {
+      logger.warn('Failed to send payment reminder SMS:', {
+        error: smsError.message,
+        bookingId: newBooking.bookingId
+      });
+      // Don't fail the booking creation if SMS fails
+    }
+
     res.status(201).json({
       status: 'success',
-      message: 'Booking berhasil dibuat',
-      data: { booking }
+      message: 'Booking created successfully. Payment reminder sent via SMS.',
+      data: {
+        booking: newBooking
+      }
     });
 
   } catch (error) {

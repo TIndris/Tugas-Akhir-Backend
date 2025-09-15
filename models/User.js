@@ -28,9 +28,17 @@ const userSchema = new mongoose.Schema({
     default: 'customer'
   },
   // ✅ REMOVED: picture field completely
-  phone: {
+  phoneNumber: {
     type: String,
-    match: [/^(\+62|62|0)[0-9]{8,13}$/, 'Format nomor telepon tidak valid']
+    trim: true,
+    validate: {
+      validator: function(v) {
+        // Optional field, but if provided, should be valid
+        if (!v) return true;
+        return /^(\+62|62|0)[0-9]{8,13}$/.test(v);
+      },
+      message: 'Phone number must be a valid Indonesian number'
+    }
   },
   // ✅ Google OAuth fields
   googleId: {
@@ -58,6 +66,8 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+}, {
+  timestamps: true
 });
 
 // ✅ Pre-save middleware
