@@ -8,7 +8,6 @@ import moment from 'moment-timezone';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 import passport from './config/passport.js';
-import SchedulerService from './services/schedulerService.js';
 
 import connectDB from './config/db.js';
 import { connectRedis } from './config/redis.js'; 
@@ -322,8 +321,6 @@ const initializeApp = async () => {
       }
     }
 
-    // ✅ CLEAN: Initialize scheduler without SMS (just for automated tasks)
-    SchedulerService.init();
 
     console.log('DSC Backend Started Successfully!');
     console.log('Environment:', process.env.NODE_ENV);
