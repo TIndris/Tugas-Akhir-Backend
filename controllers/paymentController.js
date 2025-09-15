@@ -5,7 +5,6 @@ import { client } from '../config/redis.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 import moment from 'moment-timezone';
-import NotificationService from '../services/notificationService.js';
 
 export const createPayment = async (req, res) => {
   try {
@@ -729,27 +728,28 @@ export const verifyPayment = async (req, res) => {
       logger.warn('Redis cache clear error:', redisError);
     }
 
-    // Send confirmation SMS if booking is confirmed
-    if (booking.status_pemesanan === 'confirmed') {
-      try {
-        const user = await User.findById(booking.pelanggan);
-        await NotificationService.sendBookingConfirmation(booking, user);
-        
-        booking.confirmationSent = true;
-        await booking.save();
-        
-      } catch (smsError) {
-        logger.warn('Failed to send booking confirmation SMS:', {
-          error: smsError.message,
-          bookingId: booking.bookingId
-        });
-      }
-    }
+    logger.info('Payment verified successfully:', {
+      paymentId: payment._id,
+      bookingId: booking.bookingId,
+      verifiedBy: req.user._id
+    });
 
     res.json({
       status: 'success',
-      message: 'Payment verified successfully. Confirmation sent via SMS.',
-      data: { booking }
+      message: 'Payment verified successfully. Booking confirmed.',
+      data: { 
+        payment: {
+          id: payment._id,
+          status: payment.status,
+          verified_at: payment.verified_at
+        },
+        booking: {
+          id: booking._id,
+          bookingId: booking.bookingId,
+          status: booking.status_pemesanan,
+          payment_status: booking.payment_status
+        }
+      }
     });
 
   } catch (error) {
