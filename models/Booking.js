@@ -397,8 +397,5 @@ bookingSchema.statics.findByBookingId = async function(bookingId) {
   ]);
 };
 
-// ✅ ADD: Pagination plugin
-bookingSchema.plugin(mongoosePaginate);
-
 // ✅ KEEP: Export model only
 export default mongoose.model('Booking', bookingSchema);
