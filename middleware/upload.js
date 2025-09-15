@@ -1,15 +1,59 @@
 import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import path from 'path';
 import fs from 'fs';
 import logger from '../config/logger.js';
 
-// ✅ FIXED: Production-compatible storage
+// ✅ Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// ✅ Check if Cloudinary is configured
+const isCloudinaryConfigured = () => {
+  return !!(process.env.CLOUDINARY_CLOUD_NAME && 
+           process.env.CLOUDINARY_API_KEY && 
+           process.env.CLOUDINARY_API_SECRET);
+};
+
+// ✅ Cloudinary storage configuration
+const cloudinaryStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'transfer-proofs',
+    format: async (req, file) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+        return ext.substring(1); // Remove the dot
+      }
+      return 'jpg'; // Default format
+    },
+    public_id: (req, file) => {
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 8);
+      return `transfer-proof-${timestamp}-${random}`;
+    },
+    resource_type: 'auto',
+    transformation: [
+      { 
+        width: 1500, 
+        height: 1500, 
+        crop: 'limit', 
+        quality: 'auto:good'
+      }
+    ]
+  },
+});
+
+// ✅ FALLBACK: Disk storage (existing code)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // ✅ Use /tmp for serverless environments (Vercel/Lambda)
     const uploadPath = process.env.NODE_ENV === 'production' 
-      ? '/tmp/payments'  // Serverless temp directory
-      : './uploads/payments';  // Local development
+      ? '/tmp/payments'
+      : './uploads/payments';
 
     try {
       if (!fs.existsSync(uploadPath)) {
@@ -18,7 +62,6 @@ const storage = multer.diskStorage({
       cb(null, uploadPath);
     } catch (error) {
       logger.error('Failed to create upload directory:', error);
-      // ✅ Fallback to memory storage if directory creation fails
       cb(null, '/tmp');
     }
   },
@@ -28,13 +71,21 @@ const storage = multer.diskStorage({
   }
 });
 
-// ✅ ALTERNATIVE: Use memory storage for production
+// ✅ Memory storage (existing code)
 const memoryStorage = multer.memoryStorage();
 
-// ✅ PRODUCTION-SAFE: Choose storage based on environment
-const selectedStorage = process.env.NODE_ENV === 'production' ? memoryStorage : storage;
+// ✅ SMART STORAGE SELECTION: Cloudinary first, then fallback
+const getStorage = () => {
+  if (isCloudinaryConfigured()) {
+    console.log('☁️ Using Cloudinary storage');
+    return cloudinaryStorage;
+  } else {
+    console.log('💾 Cloudinary not configured, using fallback storage');
+    return process.env.NODE_ENV === 'production' ? memoryStorage : storage;
+  }
+};
 
-// ✅ Simple file filter
+// ✅ Keep existing file filter
 const fileFilter = (req, file, cb) => {
   const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
   if (allowedTypes.includes(file.mimetype)) {
@@ -44,9 +95,9 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// ✅ PRODUCTION-SAFE: Upload configuration
+// ✅ UPDATED: Upload configuration with smart storage
 const upload = multer({
-  storage: selectedStorage,
+  storage: getStorage(), // ✅ Use smart storage selection
   fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
@@ -56,8 +107,10 @@ const upload = multer({
   }
 });
 
-// ✅ PRODUCTION-SAFE: uploadPaymentProof
+// ✅ ENHANCED: uploadPaymentProof with Cloudinary support
 export const uploadPaymentProof = (req, res, next) => {
+  console.log('🚀 Starting upload with storage type:', isCloudinaryConfigured() ? 'Cloudinary' : 'Fallback');
+  
   upload.single('transfer_proof')(req, res, (error) => {
     if (error) {
       logger.error('Payment proof upload error:', error);
@@ -94,18 +147,45 @@ export const uploadPaymentProof = (req, res, next) => {
       });
     }
 
-    // ✅ PRODUCTION: Handle memory storage vs disk storage
-    if (process.env.NODE_ENV === 'production') {
-      // Memory storage - file is in req.file.buffer
+    // ✅ ENHANCED: Handle different storage types
+    if (isCloudinaryConfigured() && req.file.path && req.file.path.includes('cloudinary')) {
+      // Cloudinary upload successful
+      console.log('✅ Cloudinary upload successful:', {
+        filename: req.file.filename,
+        size: req.file.size,
+        cloudinary_url: req.file.path,
+        public_id: req.file.public_id
+      });
+      logger.info('File uploaded to Cloudinary:', req.file.path);
+    } else if (process.env.NODE_ENV === 'production') {
+      // Memory storage fallback
       req.file.path = `memory-storage-${Date.now()}`;
+      console.log('💾 File stored in memory (fallback)');
       logger.info('File stored in memory for production');
     } else {
-      // Disk storage - file is saved to disk
+      // Disk storage fallback
+      console.log('💾 File stored to disk (fallback):', req.file.path);
       logger.info('File stored to disk:', req.file.path);
     }
 
     next();
   });
+};
+
+// ✅ Test Cloudinary connection
+export const testCloudinaryConnection = async () => {
+  if (!isCloudinaryConfigured()) {
+    return { success: false, error: 'Cloudinary not configured' };
+  }
+  
+  try {
+    const result = await cloudinary.api.ping();
+    console.log('☁️ Cloudinary connection test successful');
+    return { success: true, result };
+  } catch (error) {
+    console.error('❌ Cloudinary connection test failed:', error.message);
+    return { success: false, error: error.message };
+  }
 };
 
 export default upload;
