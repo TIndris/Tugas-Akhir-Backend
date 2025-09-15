@@ -6,8 +6,13 @@ import NotificationService from '../services/notificationService.js';
 import logger from '../config/logger.js';
 import mongoose from 'mongoose';
 import Booking from '../models/Booking.js';
+import User from '../models/User.js';
+import Field from '../models/Field.js';
 
+// ✅ ENHANCE: createBooking with proper SMS notification integration
 export const createBooking = async (req, res) => {
+  let newBooking = null; // ✅ DEFINE VARIABLE IN CORRECT SCOPE
+  
   try {
     const { lapangan_id, tanggal_booking, jam_booking, durasi } = req.body;
     
@@ -18,7 +23,8 @@ export const createBooking = async (req, res) => {
       });
     }
 
-    const booking = await BookingService.createBookingWithFullValidation({
+    // ✅ USE EXISTING BOOKING SERVICE BUT CAPTURE RESULT
+    newBooking = await BookingService.createBookingWithFullValidation({
       userId: req.user._id,
       lapanganId: lapangan_id,
       tanggalBooking: tanggal_booking,
@@ -28,32 +34,42 @@ export const createBooking = async (req, res) => {
 
     await CacheService.invalidateBookingCache(req.user._id, lapangan_id, tanggal_booking);
 
-    logger.info(`Booking created: ${booking._id}`, {
+    logger.info(`Booking created: ${newBooking._id}`, {
       user: req.user._id,
       field: lapangan_id,
       timeSlot: `${jam_booking} (${durasi}h)`,
       action: 'CREATE_BOOKING'
     });
 
-    // After successful booking creation, send payment reminder SMS
+    // ✅ ENHANCED SMS NOTIFICATION AFTER SUCCESSFUL BOOKING CREATION
     try {
       const user = await User.findById(req.user._id);
-      await NotificationService.sendPaymentReminder(newBooking, user);
-      
-      newBooking.paymentReminderSent = true;
-      await newBooking.save();
-      
+      if (user && user.phoneNumber) {
+        await NotificationService.sendPaymentReminder(newBooking, user);
+        
+        // Update notification status
+        newBooking.paymentReminderSent = true;
+        await newBooking.save();
+        
+        logger.info('Payment reminder SMS sent successfully:', {
+          bookingId: newBooking.bookingId || newBooking._id,
+          userId: req.user._id,
+          phone: user.phoneNumber
+        });
+      } else {
+        logger.warn('User has no phone number for SMS notification:', req.user._id);
+      }
     } catch (smsError) {
       logger.warn('Failed to send payment reminder SMS:', {
         error: smsError.message,
-        bookingId: newBooking.bookingId
+        bookingId: newBooking.bookingId || newBooking._id
       });
-      // Don't fail the booking creation if SMS fails
+      // ⚠️ Don't fail the booking creation if SMS fails
     }
 
     res.status(201).json({
       status: 'success',
-      message: 'Booking created successfully. Payment reminder sent via SMS.',
+      message: 'Booking berhasil dibuat. SMS pengingat pembayaran telah dikirim.',
       data: {
         booking: newBooking
       }
@@ -65,6 +81,16 @@ export const createBooking = async (req, res) => {
       requestBody: req.body,
       stack: error.stack
     });
+
+    // ✅ CLEANUP ON ERROR - DELETE PARTIAL BOOKING IF CREATED
+    if (newBooking && newBooking._id) {
+      try {
+        await Booking.findByIdAndDelete(newBooking._id);
+        logger.info('Cleaned up partial booking on error:', newBooking.bookingId || newBooking._id);
+      } catch (cleanupError) {
+        logger.error('Failed to cleanup partial booking:', cleanupError.message);
+      }
+    }
     
     if (error.errorCode === 'SLOT_CONFLICT') {
       return res.status(409).json({
@@ -90,6 +116,7 @@ export const createBooking = async (req, res) => {
   }
 };
 
+// ✅ KEEP: All existing functions unchanged
 export const getAvailability = async (req, res) => {
   try {
     const { lapangan, tanggal, jam, durasi } = req.query;
@@ -237,7 +264,7 @@ export const getBookingById = async (req, res) => {
 
       let user = null;
       if (bookingUserId) {
-        user = await User.findById(bookingUserId).select('name email phone');
+        user = await User.findById(bookingUserId).select('name email phone phoneNumber');
       }
       
       let field = null;
@@ -252,10 +279,11 @@ export const getBookingById = async (req, res) => {
 
       populatedBooking = {
         id: booking._id,
+        bookingId: booking.bookingId, // ✅ ADD: Include bookingId for SMS system
         customer: user ? {
           name: user.name || 'Unknown',
           email: user.email || 'Unknown',
-          phone: user.phone || 'Unknown'
+          phone: user.phone || user.phoneNumber || 'Unknown'
         } : {
           name: 'Data not available',
           email: 'Data not available',
@@ -282,16 +310,23 @@ export const getBookingById = async (req, res) => {
           booking: booking.status_pemesanan,
           payment: booking.payment_status
         },
+        notifications: { // ✅ ADD: SMS notification status
+          paymentReminderSent: booking.paymentReminderSent || false,
+          preparationReminderSent: booking.preparationReminderSent || false,
+          confirmationSent: booking.confirmationSent || false
+        },
         timestamps: {
           created: booking.createdAt,
           updated: booking.updatedAt,
-          confirmed: booking.konfirmasi_at
+          confirmed: booking.konfirmasi_at,
+          expired: booking.expiredAt
         }
       };
 
     } catch (populateError) {
       populatedBooking = {
         id: booking._id,
+        bookingId: booking.bookingId,
         customer: { 
           name: 'Data not available',
           email: 'Data not available', 
@@ -312,10 +347,16 @@ export const getBookingById = async (req, res) => {
           booking: booking.status_pemesanan,
           payment: booking.payment_status
         },
+        notifications: {
+          paymentReminderSent: booking.paymentReminderSent || false,
+          preparationReminderSent: booking.preparationReminderSent || false,
+          confirmationSent: booking.confirmationSent || false
+        },
         timestamps: {
           created: booking.createdAt,
           updated: booking.updatedAt,
-          confirmed: booking.konfirmasi_at
+          confirmed: booking.konfirmasi_at,
+          expired: booking.expiredAt
         }
       };
     }
@@ -343,6 +384,7 @@ export const getBookingById = async (req, res) => {
   }
 };
 
+// ✅ ENHANCE: updateBooking with SMS notification for status changes
 export const updateBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -357,7 +399,9 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    const booking = await Booking.findById(id);
+    const booking = await Booking.findById(id)
+      .populate('pelanggan', 'name email phoneNumber')
+      .populate('lapangan', 'nama');
 
     if (!booking) {
       return res.status(404).json({
@@ -366,7 +410,7 @@ export const updateBooking = async (req, res) => {
       });
     }
 
-    const bookingUserId = booking.pelanggan;
+    const bookingUserId = booking.pelanggan._id || booking.pelanggan;
     const isOwner = bookingUserId.toString() === userId.toString();
     const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
     const hasAccess = isOwner || isCashierOrAdmin;
@@ -393,11 +437,33 @@ export const updateBooking = async (req, res) => {
       updateData.kasir = userId;
     }
 
+    // ✅ TRACK STATUS CHANGES FOR SMS NOTIFICATIONS
+    const oldStatus = booking.status_pemesanan;
+    const newStatus = updateData.status_pemesanan || oldStatus;
+
     const updatedBooking = await Booking.findByIdAndUpdate(
       id,
       { ...updateData, updatedAt: new Date() },
       { new: true, runValidators: true }
-    );
+    ).populate('pelanggan', 'name email phoneNumber');
+
+    // ✅ SEND SMS NOTIFICATION FOR STATUS CHANGES
+    if (oldStatus !== newStatus && booking.pelanggan?.phoneNumber) {
+      try {
+        if (newStatus === 'confirmed') {
+          await NotificationService.sendBookingConfirmation(updatedBooking, booking.pelanggan);
+          updatedBooking.confirmationSent = true;
+          await updatedBooking.save();
+        }
+      } catch (smsError) {
+        logger.warn('Failed to send status change SMS:', {
+          error: smsError.message,
+          bookingId: booking.bookingId || booking._id,
+          oldStatus,
+          newStatus
+        });
+      }
+    }
 
     res.status(200).json({
       status: 'success',
@@ -882,7 +948,140 @@ export const getAllBookings = async (req, res) => {
   }
 };
 
-// FINAL EXPORTS - NO DUPLICATES
+// ✅ ADD: New method for booking details with controller compatibility
+export const getBookingDetails = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const userId = req.user._id;
+
+    const booking = await Booking.findByBookingId(bookingId);
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan',
+        error_code: 'BOOKING_NOT_FOUND'
+      });
+    }
+
+    // Check access permissions
+    const isOwner = booking.pelanggan._id.toString() === userId.toString();
+    const isAdminOrCashier = ['admin', 'cashier', 'kasir'].includes(req.user.role);
+
+    if (!isOwner && !isAdminOrCashier) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses untuk melihat booking ini',
+        error_code: 'ACCESS_DENIED'
+      });
+    }
+
+    res.json({
+      status: 'success',
+      data: {
+        booking
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get booking details error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengambil detail booking',
+      error_code: 'FETCH_BOOKING_DETAILS_FAILED'
+    });
+  }
+};
+
+// ✅ ADD: New method for updating booking status (Admin/Cashier)
+export const updateBookingStatus = async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { status, notes } = req.body;
+
+    const validStatuses = ['pending', 'confirmed', 'completed', 'cancelled', 'expired'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Status tidak valid',
+        error_code: 'INVALID_STATUS'
+      });
+    }
+
+    const booking = await Booking.findByBookingId(bookingId);
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan',
+        error_code: 'BOOKING_NOT_FOUND'
+      });
+    }
+
+    const oldStatus = booking.status_pemesanan;
+    booking.status_pemesanan = status;
+    booking.updatedBy = req.user._id;
+    booking.lastUpdated = new Date();
+
+    if (notes) {
+      booking.catatan = notes;
+    }
+
+    await booking.save();
+
+    // Clear cache
+    try {
+      await CacheService.clearUserBookingsCache(booking.pelanggan);
+      await CacheService.clearFieldAvailabilityCache(booking.lapangan, booking.tanggal_booking);
+    } catch (cacheError) {
+      logger.warn('Cache clear failed:', cacheError.message);
+    }
+
+    // Send SMS notification for status changes
+    if (oldStatus !== status && booking.pelanggan?.phoneNumber) {
+      try {
+        if (status === 'confirmed') {
+          await NotificationService.sendBookingConfirmation(booking, booking.pelanggan);
+          booking.confirmationSent = true;
+          await booking.save();
+        }
+      } catch (smsError) {
+        logger.warn('Failed to send status change SMS:', smsError.message);
+      }
+    }
+
+    logger.info('Booking status updated:', {
+      bookingId: booking.bookingId,
+      oldStatus,
+      newStatus: status,
+      updatedBy: req.user._id
+    });
+
+    res.json({
+      status: 'success',
+      message: 'Status booking berhasil diupdate',
+      data: {
+        booking: {
+          id: booking._id,
+          bookingId: booking.bookingId,
+          status: booking.status_pemesanan,
+          oldStatus,
+          updatedAt: booking.lastUpdated
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Update booking status error:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Gagal mengupdate status booking',
+      error_code: 'UPDATE_BOOKING_STATUS_FAILED'
+    });
+  }
+};
+
+// ✅ KEEP: Final exports with all aliases
 export const getUserBookings = getMyBookings;
 export const getBookings = getAllBookings;
 export const getCashierBookings = getAllBookingsForCashier;

@@ -408,6 +408,80 @@ export class BookingService {
       throw error;
     }
   }
+
+  // ✅ ADD: Clean up expired bookings
+  static async cleanupExpiredBookings() {
+    try {
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      
+      const expiredBookings = await Booking.updateMany(
+        {
+          status: 'pending',
+          createdAt: { $lt: tenMinutesAgo }
+        },
+        {
+          status: 'expired',
+          expiredAt: new Date()
+        }
+      );
+
+      if (expiredBookings.modifiedCount > 0) {
+        logger.info(`Cleaned up ${expiredBookings.modifiedCount} expired bookings`);
+      }
+
+      return expiredBookings.modifiedCount;
+
+    } catch (error) {
+      logger.error('Error cleaning up expired bookings:', error);
+      throw error;
+    }
+  }
+
+  // ✅ NEW: Check booking conflict
+  static async checkBookingConflict(fieldId, date, startTime, endTime, excludeBookingId = null) {
+    try {
+      const query = {
+        fieldId,
+        date,
+        status: { $in: ['pending', 'confirmed'] }, // Only check active bookings
+        $or: [
+          {
+            $and: [
+              { startTime: { $lt: endTime } },
+              { endTime: { $gt: startTime } }
+            ]
+          }
+        ]
+      };
+
+      // Exclude specific booking ID (for updates)
+      if (excludeBookingId) {
+        query._id = { $ne: excludeBookingId };
+      }
+
+      const conflictingBookings = await Booking.find(query)
+        .populate('userId', 'name email')
+        .lean();
+
+      const hasConflict = conflictingBookings.length > 0;
+
+      return {
+        hasConflict,
+        conflictingBooking: hasConflict ? {
+          id: conflictingBookings[0]._id,
+          time_range: `${conflictingBookings[0].startTime} - ${conflictingBookings[0].endTime}`,
+          status: conflictingBookings[0].status,
+          customer: conflictingBookings[0].userId?._id
+        } : null,
+        totalBookings: conflictingBookings.length,
+        allConflicts: conflictingBookings
+      };
+
+    } catch (error) {
+      logger.error('Error checking booking conflict:', error);
+      throw error;
+    }
+  }
 }
 
 export default BookingService;
