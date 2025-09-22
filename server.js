@@ -27,66 +27,68 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+// ✅ Rate limiter - relaxed for CORS debugging
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000, // ✅ Increased for debugging
   message: 'Too many requests from this IP',
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
+    if (req.method === 'OPTIONS') return true;
     const origin = req.get('Origin');
-    const isLocalhost = origin && origin.includes('localhost');
-    const isProduction = process.env.NODE_ENV === 'production';
-    return isProduction || isLocalhost;
+    const isLocalhost = origin && (origin.includes('localhost') || origin.includes('127.0.0.1'));
+    return isLocalhost || process.env.NODE_ENV !== 'production';
   }
 });
 app.use(limiter);
 
+// ✅ Helmet - relaxed for CORS
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   crossOriginEmbedderPolicy: false,
-  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https:"],
-      scriptSrc: ["'self'", "https:", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:", "http:"],
-      connectSrc: ["'self'", "https:", "http://localhost:*"],
-      frameSrc: ["'self'", "https:"],
-      fontSrc: ["'self'", "https:", "data:"]
-    }
-  }
+  crossOriginOpenerPolicy: { policy: "unsafe-none" }, // ✅ Changed for better CORS support
+  contentSecurityPolicy: false // ✅ Disabled for debugging
 }));
+
 app.use(mongoSanitize());
 
+// ✅ Get allowed origins from CLIENT_URL
 const getAllowedOrigins = () => {
   const origins = [
     process.env.CLIENT_URL,
     'http://localhost:3000',
-    'http://localhost:3001',
+    'http://localhost:3001', 
     'http://127.0.0.1:3000'
   ].filter(Boolean);
 
   return origins;
 };
 
+// ✅ ENHANCED CORS Configuration
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow no origin (mobile apps, Postman, etc.)
     if (!origin) {
       return callback(null, true);
     }
 
     const allowedOrigins = getAllowedOrigins();
     
-    if (allowedOrigins.includes(origin) || 
-        origin.includes('localhost') || 
+    // Check specific origins first
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // Allow development domains
+    if (origin.includes('localhost') || 
         origin.includes('127.0.0.1') ||
         origin.includes('vercel.app')) {
-      callback(null, true);
-    } else {
-      callback(null, true);
+      return callback(null, true);
     }
+    
+    // Allow all for debugging CORS issues
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -102,11 +104,32 @@ app.use(cors({
     'Pragma'
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range', 'Set-Cookie'],
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 }));
 
+// ✅ Handle preflight OPTIONS requests
 app.options('*', cors());
 
+// ✅ Manual CORS headers as backup
+app.use((req, res, next) => {
+  const origin = req.get('Origin');
+  
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control,Pragma');
+  }
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// ✅ Session configuration
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-session-secret',
   resave: false,
@@ -128,6 +151,7 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// ✅ Body parsing middleware
 app.use(express.json({ 
   limit: '50mb',
   strict: false 
@@ -139,19 +163,7 @@ app.use(express.urlencoded({
   parameterLimit: 50000
 }));
 
-app.use((req, res, next) => {
-  if (req.path.includes('/payments') && req.method === 'POST') {
-    console.log('Payment request:', {
-      method: req.method,
-      path: req.path,
-      contentType: req.headers['content-type'],
-      hasBody: !!req.body,
-      timestamp: new Date().toISOString()
-    });
-  }
-  next();
-});
-
+// ✅ Error handling for JSON parsing
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
     logger.error('Bad JSON syntax:', error);
@@ -165,17 +177,7 @@ app.use((error, req, res, next) => {
   next(error);
 });
 
-app.use((req, res, next) => {
-  const origin = req.get('Origin');
-  
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-  }
-  
-  next();
-});
-
+// ✅ Request logging middleware (only in development)
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     const start = Date.now();
@@ -187,6 +189,7 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// ✅ Root endpoint
 app.get('/', (req, res) => {
   const now = moment().tz('Asia/Jakarta');
   
@@ -252,6 +255,7 @@ app.get('/', (req, res) => {
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
+// ✅ API Routes
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/bookings', bookingRoutes);
@@ -259,28 +263,31 @@ app.use('/fields', fieldRoutes);
 app.use('/payments', paymentRoutes); 
 app.use('/analytics', analyticsRoutes);  
 
+// ✅ 404 handler
 app.use((req, res) => {
   res.status(404).json({
     status: 'error',
     message: 'API endpoint not found',
     path: req.originalUrl,
-    method: req.method,
-    origin: req.get('Origin')
+    method: req.method
   });
 });
 
+// ✅ Global error handler with CORS
 app.use((err, req, res, next) => {
+  // Set CORS headers for error responses
+  const origin = req.get('Origin');
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+  
   logger.error('Global error handler:', {
     error: err.message,
     stack: err.stack,
     url: req.url,
-    method: req.method,
-    origin: req.get('Origin')
+    method: req.method
   });
-
-  if (process.env.NODE_ENV !== 'production') {
-    logger.error(err.stack);
-  }
 
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({
@@ -291,16 +298,19 @@ app.use((err, req, res, next) => {
     });
   }
   
-  res.status(err.status || 500).json({
+  const errorResponse = {
     status: 'error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { 
-      stack: err.stack,
-      origin: req.get('Origin')
-    })
-  });
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+  };
+
+  if (process.env.NODE_ENV === 'development') {
+    errorResponse.stack = err.stack;
+  }
+  
+  res.status(err.status || 500).json(errorResponse);
 });
 
+// ✅ Initialize app
 const initializeApp = async () => {
   try {
     await connectDB();
@@ -308,28 +318,23 @@ const initializeApp = async () => {
     try {
       await connectRedis();
     } catch (redisError) {
-      if (process.env.NODE_ENV !== 'production') {
-        logger.warn('Redis connection failed, continuing without cache');
-      }
+      logger.warn('Redis connection failed, continuing without cache');
     }
     
     try {
       await initAdmin();
     } catch (adminError) {
-      if (process.env.NODE_ENV !== 'production') {
-        logger.warn('Admin initialization warning:', adminError.message);
-      }
+      logger.warn('Admin initialization warning:', adminError.message);
     }
 
-
-    console.log('DSC Backend Started Successfully!');
-    console.log('Environment:', process.env.NODE_ENV);
-    console.log('Backend URL:', process.env.BACKEND_URL);
-    console.log('Client URL:', process.env.CLIENT_URL);
-    console.log('Google OAuth:', !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
-    console.log('CORS Origins:', getAllowedOrigins());
-    console.log('MongoDB Store: Connected');
-    console.log('Automated Tasks: Enabled (Payment deadlines, Status updates)');
+    // ✅ Minimal logging for production
+    logger.info('DSC Backend Started Successfully!', {
+      environment: process.env.NODE_ENV,
+      backend_url: process.env.BACKEND_URL,
+      client_url: process.env.CLIENT_URL,
+      google_oauth: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      cors_origins: getAllowedOrigins()
+    });
     
   } catch (error) {
     logger.error('App initialization failed:', error);
