@@ -850,9 +850,9 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
+    // ✅ SIMPLIFIED: Only check if booking is not already processed
     const canCancelStatuses = ['pending', 'waiting_payment', 'dp_required'];
-    const canCancelPaymentStatuses = ['no_payment', 'pending_verification', 'expired'];
-
+    
     if (!canCancelStatuses.includes(booking.status_pemesanan)) {
       return res.status(400).json({
         status: 'error',
@@ -860,24 +860,17 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    if (!canCancelPaymentStatuses.includes(booking.payment_status)) {
+    // ✅ SIMPLIFIED: Only prevent cancellation if payment is already confirmed
+    const hasConfirmedPayment = ['dp_confirmed', 'fully_paid', 'verified'].includes(booking.payment_status);
+
+    if (hasConfirmedPayment) {
       return res.status(400).json({
         status: 'error',
-        message: 'Booking ini tidak dapat dibatalkan karena pembayaran sudah diproses'
+        message: 'Booking tidak dapat dibatalkan karena pembayaran sudah dikonfirmasi'
       });
     }
 
-    if (userRole === 'customer' && booking.payment_deadline) {
-      const now = new Date();
-      const deadline = new Date(booking.payment_deadline);
-      
-      if (now > deadline) {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Booking sudah melewati batas waktu pembayaran dan tidak dapat dibatalkan'
-        });
-      }
-    }
+    // ❌ REMOVED: Payment deadline check - Allow cancellation anytime before payment confirmation
 
     await Booking.findByIdAndDelete(id);
 
