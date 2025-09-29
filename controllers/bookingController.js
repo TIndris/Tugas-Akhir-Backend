@@ -1184,12 +1184,12 @@ export const approveBookingByAdmin = async (req, res) => {
       });
     }
 
-    // Update booking status - APPROVED WITHOUT PAYMENT
+    // ✅ FIXED: Update booking status - APPROVED WITHOUT PAYMENT
     booking.status_pemesanan = 'confirmed';
-    booking.payment_status = 'admin_approved'; // Special status
+    booking.payment_status = 'verified'; // ✅ Gunakan enum yang valid
     booking.kasir = req.user._id;
     booking.konfirmasi_at = new Date();
-    booking.approved_by_admin = true;
+    booking.approved_by_admin = true; // Flag khusus untuk tracking
     booking.approved_by = req.user._id;
     booking.approved_at = new Date();
     
@@ -1211,7 +1211,8 @@ export const approveBookingByAdmin = async (req, res) => {
       bookingId: booking.bookingId,
       approvedBy: req.user._id,
       userRole: req.user.role,
-      customerId: booking.pelanggan._id
+      customerId: booking.pelanggan._id,
+      paymentStatus: booking.payment_status
     });
 
     res.status(200).json({
@@ -1223,6 +1224,7 @@ export const approveBookingByAdmin = async (req, res) => {
           bookingId: booking.bookingId,
           status: booking.status_pemesanan,
           payment_status: booking.payment_status,
+          approved_without_payment: booking.approved_by_admin, // ✅ Flag untuk frontend
           approved_by: req.user.name,
           approved_at: booking.konfirmasi_at,
           customer: {

@@ -76,7 +76,11 @@ const bookingSchema = new mongoose.Schema({
       'dp_confirmed',
       'fully_paid',
       'expired',
-      'refunded'
+      'refunded',
+      'verified',
+      'admin_approved' ,
+      'rejected',
+      'expired'
     ],
     default: 'no_payment'
   },
