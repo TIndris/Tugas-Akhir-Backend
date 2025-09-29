@@ -559,18 +559,21 @@ export const updateBooking = async (req, res) => {
   }
 };
 
-// ✅ CLEAN: updateBookingStatus without SMS logic
+// ✅ FIXED: updateBookingStatus - Add 'rejected' to valid statuses
 export const updateBookingStatus = async (req, res) => {
   try {
     const { bookingId } = req.params;
     const { status, notes } = req.body;
 
-    const validStatuses = ['pending', 'confirmed', 'completed', 'cancelled', 'expired'];
+    // ✅ FIXED: Include 'rejected' status
+    const validStatuses = ['pending', 'confirmed', 'completed', 'cancelled', 'expired', 'rejected'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         status: 'error',
         message: 'Status tidak valid',
-        error_code: 'INVALID_STATUS'
+        error_code: 'INVALID_STATUS',
+        valid_statuses: validStatuses,
+        provided_status: status
       });
     }
 
@@ -593,6 +596,15 @@ export const updateBookingStatus = async (req, res) => {
       booking.catatan = notes;
     }
 
+    // ✅ Add rejection tracking
+    if (status === 'rejected') {
+      booking.rejected_by = req.user._id;
+      booking.rejected_at = new Date();
+      if (notes) {
+        booking.rejection_reason = notes;
+      }
+    }
+
     await booking.save();
 
     // Clear cache
@@ -602,8 +614,6 @@ export const updateBookingStatus = async (req, res) => {
     } catch (cacheError) {
       logger.warn('Cache clear failed:', cacheError.message);
     }
-
-    // ❌ REMOVED: SMS notification for status changes
 
     logger.info('Booking status updated:', {
       bookingId: booking.bookingId,
@@ -621,7 +631,12 @@ export const updateBookingStatus = async (req, res) => {
           bookingId: booking.bookingId,
           status: booking.status_pemesanan,
           oldStatus,
-          updatedAt: booking.lastUpdated
+          updatedAt: booking.lastUpdated,
+          ...(status === 'rejected' && {
+            rejected_by: req.user._id,
+            rejected_at: booking.rejected_at,
+            rejection_reason: booking.rejection_reason
+          })
         }
       }
     });
@@ -850,27 +865,36 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    // ✅ SIMPLIFIED: Only check if booking is not already processed
-    const canCancelStatuses = ['pending', 'waiting_payment', 'dp_required'];
+    // ✅ FIXED: Allow cancellation of REJECTED bookings
+    const canCancelStatuses = ['pending', 'waiting_payment', 'dp_required', 'rejected'];
     
     if (!canCancelStatuses.includes(booking.status_pemesanan)) {
       return res.status(400).json({
         status: 'error',
-        message: 'Booking ini tidak dapat dibatalkan karena sudah dikonfirmasi atau selesai'
+        message: 'Booking ini tidak dapat dibatalkan karena sudah dikonfirmasi atau selesai',
+        current_status: booking.status_pemesanan,
+        allowed_statuses: canCancelStatuses
       });
     }
 
     // ✅ SIMPLIFIED: Only prevent cancellation if payment is already confirmed
     const hasConfirmedPayment = ['dp_confirmed', 'fully_paid', 'verified'].includes(booking.payment_status);
 
-    if (hasConfirmedPayment) {
+    // ✅ Special handling for admin-approved bookings
+    if (hasConfirmedPayment && booking.approved_by_admin && userRole === 'customer') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking yang telah disetujui admin hanya dapat dibatalkan oleh kasir/admin'
+      });
+    }
+
+    // ✅ Allow regular payment confirmed bookings to be cancelled by admin/kasir
+    if (hasConfirmedPayment && !booking.approved_by_admin && userRole === 'customer') {
       return res.status(400).json({
         status: 'error',
         message: 'Booking tidak dapat dibatalkan karena pembayaran sudah dikonfirmasi'
       });
     }
-
-    // ❌ REMOVED: Payment deadline check - Allow cancellation anytime before payment confirmation
 
     await Booking.findByIdAndDelete(id);
 
@@ -883,18 +907,25 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
+    logger.info('Booking cancelled successfully:', {
+      bookingId: booking.bookingId,
+      originalStatus: booking.status_pemesanan,
+      cancelledBy: userId,
+      userRole: userRole,
+      reason: cancel_reason
+    });
+
     res.status(200).json({
       status: 'success',
       message: 'Booking berhasil dibatalkan dan dihapus',
       data: {
         deleted_booking: {
           id: id,
+          original_status: booking.status_pemesanan,
+          was_rejected: booking.status_pemesanan === 'rejected',
           cancel_reason: cancel_reason || 'Dibatalkan oleh customer',
           cancelled_at: new Date(),
-          original_status: {
-            booking: booking.status_pemesanan,
-            payment: booking.payment_status
-          }
+          cancelled_by: userRole
         }
       }
     });
@@ -915,239 +946,19 @@ export const cancelBooking = async (req, res) => {
   }
 };
 
-export const deleteBooking = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-    const userRole = req.user.role;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'ID booking tidak valid'
-      });
-    }
-
-    const booking = await Booking.findById(id);
-
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan'
-      });
-    }
-
-    const bookingUserId = booking.pelanggan;
-    const isOwner = bookingUserId.toString() === userId.toString();
-    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
-    const hasAccess = isOwner || isCashierOrAdmin;
-
-    if (!hasAccess) {
-      return res.status(403).json({
-        status: 'error',
-        message: 'Anda tidak memiliki akses untuk menghapus booking ini'
-      });
-    }
-
-    if (booking.status_pemesanan === 'completed') {
-      return res.status(400).json({
-        status: 'error',
-        message: 'Booking yang sudah selesai tidak dapat dihapus'
-      });
-    }
-
-    await Booking.findByIdAndDelete(id);
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Booking berhasil dihapus'
-    });
-
-  } catch (error) {
-    logger.error('Delete booking error:', {
-      error: error.message,
-      bookingId: req.params.id
-    });
-    res.status(500).json({
-      status: 'error',
-      message: 'Terjadi kesalahan saat menghapus booking'
-    });
-  }
-};
-
-export const getBookingStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-
-    const statusData = await BookingStatusService.getBookingStatusDetail(id, userId);
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Status booking berhasil diambil',
-      data: statusData
-    });
-
-  } catch (error) {
-    logger.error(`Get booking status error: ${error.message}`, {
-      bookingId: req.params.id,
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Terjadi kesalahan saat mengambil status booking'
-    });
-  }
-};
-
-export const getBookingStatusSummary = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    const summaryData = await BookingAnalyticsService.getBookingStatusSummary(userId);
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Ringkasan status booking berhasil diambil',
-      data: summaryData
-    });
-
-  } catch (error) {
-    logger.error(`Get booking status summary error: ${error.message}`, {
-      userId: req.user._id,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Terjadi kesalahan saat mengambil ringkasan status'
-    });
-  }
-};
-
-export const getAllBookingsForCashier = async (req, res) => {
-  try {
-    const filters = {
-      status: req.query.status,
-      payment_status: req.query.payment_status,
-      date_from: req.query.date_from,
-      date_to: req.query.date_to,
-      search: req.query.search,
-      field_type: req.query.field_type
-    };
-
-    const data = await BookingAnalyticsService.getAllBookingsForCashier(filters);
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Data booking berhasil diambil',
-      data
-    });
-
-  } catch (error) {
-    logger.error(`Error getting all bookings for kasir: ${error.message}`, {
-      userId: req.user._id,
-      role: req.user.role,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Gagal mengambil data booking'
-    });
-  }
-};
-
-export const getAllBookings = async (req, res) => {
-  try {
-    const filters = {
-      status: req.query.status,
-      payment_status: req.query.payment_status,
-      date_from: req.query.date_from,
-      date_to: req.query.date_to,
-      search: req.query.search,
-      field_type: req.query.field_type
-    };
-
-    const bookings = await BookingAnalyticsService.getAllBookingsForAdmin(filters);
-
-    res.status(200).json({
-      status: 'success',
-      results: bookings.length,
-      data: { bookings }
-    });
-
-  } catch (error) {
-    logger.error(`Admin get all bookings error: ${error.message}`, {
-      userId: req.user._id,
-      role: req.user.role,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      status: 'error',
-      message: 'Gagal mengambil data booking'
-    });
-  }
-};
-
-export const getBookingDetails = async (req, res) => {
-  try {
-    const { bookingId } = req.params;
-    const userId = req.user._id;
-
-    const booking = await Booking.findByBookingId(bookingId);
-
-    if (!booking) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Booking tidak ditemukan',
-        error_code: 'BOOKING_NOT_FOUND'
-      });
-    }
-
-    // Check access permissions
-    const isOwner = booking.pelanggan._id.toString() === userId.toString();
-    const isAdminOrCashier = ['admin', 'cashier', 'kasir'].includes(req.user.role);
-
-    if (!isOwner && !isAdminOrCashier) {
-      return res.status(403).json({
-        status: 'error',
-        message: 'Anda tidak memiliki akses untuk melihat booking ini',
-        error_code: 'ACCESS_DENIED'
-      });
-    }
-
-    res.json({
-      status: 'success',
-      data: {
-        booking
-      }
-    });
-
-  } catch (error) {
-    logger.error('Get booking details error:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Gagal mengambil detail booking',
-      error_code: 'FETCH_BOOKING_DETAILS_FAILED'
-    });
-  }
-};
-
-// ✅ NEW: Admin/Kasir approve booking tanpa payment
+// ✅ FIXED: approveBookingByAdmin - Allow kasir dan cashier
 export const approveBookingByAdmin = async (req, res) => {
   try {
     const { id } = req.params;
     const { notes } = req.body;
 
-    // Validate admin/kasir role
-    if (!['admin', 'kasir'].includes(req.user.role)) {
+    // ✅ FIXED: Allow admin, kasir, AND cashier
+    if (!['admin', 'kasir', 'cashier'].includes(req.user.role)) {
       return res.status(403).json({
         status: 'error',
-        message: 'Hanya admin atau kasir yang dapat menyetujui booking'
+        message: 'Hanya admin atau kasir yang dapat menyetujui booking',
+        current_role: req.user.role,
+        allowed_roles: ['admin', 'kasir', 'cashier']
       });
     }
 
@@ -1173,23 +984,25 @@ export const approveBookingByAdmin = async (req, res) => {
     if (booking.status_pemesanan !== 'pending') {
       return res.status(400).json({
         status: 'error',
-        message: 'Hanya booking dengan status pending yang dapat disetujui'
+        message: 'Hanya booking dengan status pending yang dapat disetujui',
+        current_status: booking.status_pemesanan
       });
     }
 
     if (booking.payment_status !== 'no_payment') {
       return res.status(400).json({
         status: 'error',
-        message: 'Booking ini sudah memiliki pembayaran, gunakan verifikasi payment'
+        message: 'Booking ini sudah memiliki pembayaran, gunakan verifikasi payment',
+        current_payment_status: booking.payment_status
       });
     }
 
-    // ✅ FIXED: Update booking status - APPROVED WITHOUT PAYMENT
+    // ✅ Update booking status - APPROVED WITHOUT PAYMENT
     booking.status_pemesanan = 'confirmed';
-    booking.payment_status = 'verified'; // ✅ Gunakan enum yang valid
+    booking.payment_status = 'verified'; 
     booking.kasir = req.user._id;
     booking.konfirmasi_at = new Date();
-    booking.approved_by_admin = true; // Flag khusus untuk tracking
+    booking.approved_by_admin = true;
     booking.approved_by = req.user._id;
     booking.approved_at = new Date();
     
@@ -1211,8 +1024,7 @@ export const approveBookingByAdmin = async (req, res) => {
       bookingId: booking.bookingId,
       approvedBy: req.user._id,
       userRole: req.user.role,
-      customerId: booking.pelanggan._id,
-      paymentStatus: booking.payment_status
+      customerId: booking.pelanggan._id
     });
 
     res.status(200).json({
@@ -1224,7 +1036,7 @@ export const approveBookingByAdmin = async (req, res) => {
           bookingId: booking.bookingId,
           status: booking.status_pemesanan,
           payment_status: booking.payment_status,
-          approved_without_payment: booking.approved_by_admin, // ✅ Flag untuk frontend
+          approved_without_payment: booking.approved_by_admin,
           approved_by: req.user.name,
           approved_at: booking.konfirmasi_at,
           customer: {
@@ -1254,17 +1066,19 @@ export const approveBookingByAdmin = async (req, res) => {
   }
 };
 
-// ✅ NEW: Admin/Kasir reject booking
+// ✅ FIXED: rejectBookingByAdmin - Allow kasir dan cashier
 export const rejectBookingByAdmin = async (req, res) => {
   try {
     const { id } = req.params;
     const { rejection_reason } = req.body;
 
-    // Validate admin/kasir role
-    if (!['admin', 'kasir'].includes(req.user.role)) {
+    // ✅ FIXED: Allow admin, kasir, AND cashier
+    if (!['admin', 'kasir', 'cashier'].includes(req.user.role)) {
       return res.status(403).json({
         status: 'error',
-        message: 'Hanya admin atau kasir yang dapat menolak booking'
+        message: 'Hanya admin atau kasir yang dapat menolak booking',
+        current_role: req.user.role,
+        allowed_roles: ['admin', 'kasir', 'cashier']
       });
     }
 
@@ -1297,7 +1111,8 @@ export const rejectBookingByAdmin = async (req, res) => {
     if (booking.status_pemesanan !== 'pending') {
       return res.status(400).json({
         status: 'error',
-        message: 'Hanya booking dengan status pending yang dapat ditolak'
+        message: 'Hanya booking dengan status pending yang dapat ditolak',
+        current_status: booking.status_pemesanan
       });
     }
 

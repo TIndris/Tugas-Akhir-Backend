@@ -98,27 +98,26 @@ export const restrictTo = (...roles) => {
   };
 };
 
+// ✅ UPDATE: Allow kasir untuk booking operations
 export const requireCashierOrAdmin = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({
-      status: 'error',
-      message: 'Please login first',
-      code: 'NOT_AUTHENTICATED'
-    });
-  }
-
-  const userRole = req.user.role;
-  
-  if (userRole !== 'cashier' && userRole !== 'admin') {
+  if (!['kasir', 'cashier', 'admin'].includes(req.user.role)) {
     return res.status(403).json({
       status: 'error',
-      message: 'Access denied. Cashier or Admin role required',
-      user_role: userRole,
-      required_roles: ['cashier', 'admin'],
-      code: 'ROLE_REQUIRED'
+      message: 'Akses ditolak. Hanya kasir atau admin yang diizinkan.',
+      current_role: req.user.role,
+      allowed_roles: ['kasir', 'cashier', 'admin']
     });
   }
+  next();
+};
 
+export const requireAdmin = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({
+      status: 'error',
+      message: 'Akses ditolak. Hanya admin yang diizinkan.'
+    });
+  }
   next();
 };
 
