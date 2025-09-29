@@ -6,6 +6,7 @@ import {
   updateBooking,
   updateBookingByCustomer,
   cancelBooking,
+  deleteBooking,
   getAllBookings,
   getAllBookingsForCashier, 
   checkAvailability,
@@ -47,5 +48,6 @@ router.patch('/:id/update', updateBookingByCustomer);
 router.get('/:id/status', getBookingStatus);
 router.get('/:id', getBookingById);
 router.patch('/:id', updateBooking);
+router.delete('/:id', deleteBooking);
 
 export default router;

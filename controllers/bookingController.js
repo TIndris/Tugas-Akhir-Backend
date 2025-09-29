@@ -1168,3 +1168,481 @@ export const rejectBookingByAdmin = async (req, res) => {
     });
   }
 };
+
+// ✅ ADD: deleteBooking function (jika diperlukan)
+export const deleteBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    // Find booking
+    const booking = await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Check access - only admin/kasir or owner can delete
+    const bookingUserId = booking.pelanggan;
+    const isOwner = bookingUserId.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
+    const hasAccess = isOwner || isCashierOrAdmin;
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses untuk menghapus booking ini'
+      });
+    }
+
+    // Only allow deletion of certain statuses
+    const deletableStatuses = ['pending', 'cancelled', 'rejected', 'expired'];
+    
+    if (!deletableStatuses.includes(booking.status_pemesanan)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking dengan status ini tidak dapat dihapus',
+        current_status: booking.status_pemesanan,
+        deletable_statuses: deletableStatuses
+      });
+    }
+
+    // Prevent deletion if payment is confirmed (unless admin)
+    const hasConfirmedPayment = ['verified', 'fully_paid', 'dp_confirmed'].includes(booking.payment_status);
+    
+    if (hasConfirmedPayment && !isCashierOrAdmin) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking dengan pembayaran terkonfirmasi hanya dapat dihapus oleh admin/kasir'
+      });
+    }
+
+    // Delete booking
+    await Booking.findByIdAndDelete(id);
+
+    // Clear cache
+    try {
+      await CacheService.invalidateBookingCache(bookingUserId, booking.lapangan, booking.tanggal_booking);
+    } catch (cacheError) {
+      logger.warn('Cache invalidation failed during booking deletion', {
+        error: cacheError.message,
+        bookingId: id
+      });
+    }
+
+    logger.info('Booking deleted successfully:', {
+      bookingId: booking.bookingId,
+      deletedBy: userId,
+      userRole: userRole,
+      originalStatus: booking.status_pemesanan
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking berhasil dihapus',
+      data: {
+        deleted_booking: {
+          id: id,
+          bookingId: booking.bookingId,
+          original_status: booking.status_pemesanan,
+          deleted_at: new Date(),
+          deleted_by: userRole
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Delete booking error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id?.toString(),
+      userRole: req.user?.role,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat menghapus booking'
+    });
+  }
+};
+
+// ✅ ADD: getAllBookings function
+export const getAllBookings = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 10, 
+      status, 
+      payment_status, 
+      date_from, 
+      date_to,
+      field_id,
+      customer_name 
+    } = req.query;
+
+    // Build query
+    const query = {};
+    
+    if (status) {
+      query.status_pemesanan = status;
+    }
+    
+    if (payment_status) {
+      query.payment_status = payment_status;
+    }
+    
+    if (field_id) {
+      query.lapangan = field_id;
+    }
+    
+    if (date_from || date_to) {
+      query.tanggal_booking = {};
+      if (date_from) {
+        query.tanggal_booking.$gte = new Date(date_from);
+      }
+      if (date_to) {
+        query.tanggal_booking.$lte = new Date(date_to);
+      }
+    }
+
+    // Calculate skip
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Get bookings with population
+    const bookings = await Booking.find(query)
+      .populate('pelanggan', 'name email phoneNumber')
+      .populate('lapangan', 'nama jenis_lapangan harga')
+      .populate('kasir', 'name email')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    // Filter by customer name if provided
+    let filteredBookings = bookings;
+    if (customer_name) {
+      filteredBookings = bookings.filter(booking => 
+        booking.pelanggan?.name?.toLowerCase().includes(customer_name.toLowerCase())
+      );
+    }
+
+    // Get total count
+    const total = await Booking.countDocuments(query);
+
+    // Calculate pagination
+    const totalPages = Math.ceil(total / parseInt(limit));
+    const hasNextPage = parseInt(page) < totalPages;
+    const hasPrevPage = parseInt(page) > 1;
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Data booking berhasil diambil',
+      data: {
+        bookings: filteredBookings,
+        pagination: {
+          current_page: parseInt(page),
+          total_pages: totalPages,
+          total_items: total,
+          items_per_page: parseInt(limit),
+          has_next_page: hasNextPage,
+          has_prev_page: hasPrevPage
+        },
+        summary: {
+          total_bookings: total,
+          filtered_results: filteredBookings.length
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get all bookings error:', {
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil data booking'
+    });
+  }
+};
+
+// ✅ ADD: getAllBookingsForCashier function
+export const getAllBookingsForCashier = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      status, 
+      payment_status, 
+      today_only,
+      pending_only 
+    } = req.query;
+
+    // Build query for cashier view
+    const query = {};
+    
+    // Cashier usually focuses on pending payments
+    if (pending_only === 'true') {
+      query.status_pemesanan = 'pending';
+      query.payment_status = { $in: ['no_payment', 'pending'] };
+    } else {
+      if (status) {
+        query.status_pemesanan = status;
+      }
+      
+      if (payment_status) {
+        query.payment_status = payment_status;
+      }
+    }
+    
+    // Today's bookings only
+    if (today_only === 'true') {
+      const today = new Date();
+      const startOfDay = new Date(today.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+      
+      query.tanggal_booking = {
+        $gte: startOfDay,
+        $lte: endOfDay
+      };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    const bookings = await Booking.find(query)
+      .populate('pelanggan', 'name email phoneNumber')
+      .populate('lapangan', 'nama jenis_lapangan harga')
+      .populate('kasir', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    const total = await Booking.countDocuments(query);
+
+    // Status summary for cashier dashboard
+    const statusSummary = await Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$status_pemesanan',
+          count: { $sum: 1 },
+          total_amount: { $sum: '$harga' }
+        }
+      }
+    ]);
+
+    const paymentSummary = await Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$payment_status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Data booking untuk kasir berhasil diambil',
+      data: {
+        bookings,
+        pagination: {
+          current_page: parseInt(page),
+          total_pages: Math.ceil(total / parseInt(limit)),
+          total_items: total,
+          items_per_page: parseInt(limit)
+        },
+        summary: {
+          by_status: statusSummary,
+          by_payment: paymentSummary,
+          total_bookings: total
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get bookings for cashier error:', {
+      error: error.message,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil data booking'
+    });
+  }
+};
+
+// ✅ ADD: getBookingStatus function
+export const getBookingStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id)
+      .select('bookingId status_pemesanan payment_status createdAt updatedAt konfirmasi_at rejected_at approved_by_admin')
+      .lean();
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Check access permissions
+    const userId = req.user._id;
+    const userRole = req.user.role;
+    const bookingUserId = booking.pelanggan;
+    const isOwner = bookingUserId && bookingUserId.toString() === userId.toString();
+    const isCashierOrAdmin = ['kasir', 'cashier', 'admin'].includes(userRole);
+
+    if (!isOwner && !isCashierOrAdmin) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Anda tidak memiliki akses untuk melihat status booking ini'
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Status booking berhasil diambil',
+      data: {
+        booking_status: {
+          id: booking._id,
+          bookingId: booking.bookingId,
+          status: booking.status_pemesanan,
+          payment_status: booking.payment_status,
+          approved_by_admin: booking.approved_by_admin || false,
+          timestamps: {
+            created: booking.createdAt,
+            updated: booking.updatedAt,
+            confirmed: booking.konfirmasi_at,
+            rejected: booking.rejected_at
+          }
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get booking status error:', {
+      error: error.message,
+      bookingId: req.params.id
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil status booking'
+    });
+  }
+};
+
+// ✅ ADD: getBookingStatusSummary function
+export const getBookingStatusSummary = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    let query = {};
+    
+    // If customer, only show their bookings
+    if (userRole === 'customer') {
+      query.pelanggan = userId;
+    }
+
+    // Get status summary
+    const statusSummary = await Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$status_pemesanan',
+          count: { $sum: 1 },
+          total_amount: { $sum: '$harga' }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+
+    // Get payment status summary
+    const paymentSummary = await Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$payment_status',
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      }
+    ]);
+
+    // Get recent bookings
+    const recentBookings = await Booking.find(query)
+      .populate('lapangan', 'nama')
+      .select('bookingId status_pemesanan payment_status tanggal_booking jam_booking harga createdAt')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
+
+    // Calculate totals
+    const totalBookings = await Booking.countDocuments(query);
+    const totalAmount = await Booking.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$harga' }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Ringkasan status booking berhasil diambil',
+      data: {
+        summary: {
+          total_bookings: totalBookings,
+          total_amount: totalAmount.length > 0 ? totalAmount[0].total : 0,
+          by_status: statusSummary,
+          by_payment: paymentSummary
+        },
+        recent_bookings: recentBookings
+      }
+    });
+
+  } catch (error) {
+    logger.error('Get booking status summary error:', {
+      error: error.message,
+      userId: req.user._id
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat mengambil ringkasan status booking'
+    });
+  }
+};
