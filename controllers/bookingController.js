@@ -1136,3 +1136,218 @@ export const getBookingDetails = async (req, res) => {
     });
   }
 };
+
+// ✅ NEW: Admin/Kasir approve booking tanpa payment
+export const approveBookingByAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    // Validate admin/kasir role
+    if (!['admin', 'kasir'].includes(req.user.role)) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Hanya admin atau kasir yang dapat menyetujui booking'
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id)
+      .populate('pelanggan', 'name email')
+      .populate('lapangan', 'nama');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Only allow pending bookings with no payment
+    if (booking.status_pemesanan !== 'pending') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Hanya booking dengan status pending yang dapat disetujui'
+      });
+    }
+
+    if (booking.payment_status !== 'no_payment') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Booking ini sudah memiliki pembayaran, gunakan verifikasi payment'
+      });
+    }
+
+    // Update booking status - APPROVED WITHOUT PAYMENT
+    booking.status_pemesanan = 'confirmed';
+    booking.payment_status = 'admin_approved'; // Special status
+    booking.kasir = req.user._id;
+    booking.konfirmasi_at = new Date();
+    booking.approved_by_admin = true;
+    booking.approved_by = req.user._id;
+    booking.approved_at = new Date();
+    
+    if (notes) {
+      booking.catatan = notes;
+    }
+
+    await booking.save();
+
+    // Clear cache
+    try {
+      await CacheService.clearUserBookingsCache(booking.pelanggan._id);
+      await CacheService.clearFieldAvailabilityCache(booking.lapangan._id, booking.tanggal_booking);
+    } catch (cacheError) {
+      logger.warn('Cache clear failed:', cacheError.message);
+    }
+
+    logger.info('Booking approved by admin/kasir without payment:', {
+      bookingId: booking.bookingId,
+      approvedBy: req.user._id,
+      userRole: req.user.role,
+      customerId: booking.pelanggan._id
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Booking berhasil disetujui tanpa pembayaran oleh ${req.user.role}`,
+      data: {
+        booking: {
+          id: booking._id,
+          bookingId: booking.bookingId,
+          status: booking.status_pemesanan,
+          payment_status: booking.payment_status,
+          approved_by: req.user.name,
+          approved_at: booking.konfirmasi_at,
+          customer: {
+            name: booking.pelanggan.name,
+            email: booking.pelanggan.email
+          },
+          field: {
+            name: booking.lapangan.nama
+          },
+          notes: booking.catatan
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Admin/Kasir approve booking error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id,
+      userRole: req.user?.role
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat menyetujui booking'
+    });
+  }
+};
+
+// ✅ NEW: Admin/Kasir reject booking
+export const rejectBookingByAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejection_reason } = req.body;
+
+    // Validate admin/kasir role
+    if (!['admin', 'kasir'].includes(req.user.role)) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Hanya admin atau kasir yang dapat menolak booking'
+      });
+    }
+
+    if (!rejection_reason) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Alasan penolakan harus diisi'
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'ID booking tidak valid'
+      });
+    }
+
+    const booking = await Booking.findById(id)
+      .populate('pelanggan', 'name email')
+      .populate('lapangan', 'nama');
+
+    if (!booking) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking tidak ditemukan'
+      });
+    }
+
+    // Only allow pending bookings
+    if (booking.status_pemesanan !== 'pending') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Hanya booking dengan status pending yang dapat ditolak'
+      });
+    }
+
+    // Update booking status - REJECTED
+    booking.status_pemesanan = 'rejected';
+    booking.rejected_by = req.user._id;
+    booking.rejected_at = new Date();
+    booking.rejection_reason = rejection_reason;
+
+    await booking.save();
+
+    logger.info('Booking rejected by admin/kasir:', {
+      bookingId: booking.bookingId,
+      rejectedBy: req.user._id,
+      userRole: req.user.role,
+      customerId: booking.pelanggan._id,
+      reason: rejection_reason
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Booking berhasil ditolak oleh ${req.user.role}`,
+      data: {
+        booking: {
+          id: booking._id,
+          bookingId: booking.bookingId,
+          status: booking.status_pemesanan,
+          rejected_by: req.user.name,
+          rejected_at: booking.rejected_at,
+          rejection_reason: booking.rejection_reason,
+          customer: {
+            name: booking.pelanggan.name,
+            email: booking.pelanggan.email
+          },
+          field: {
+            name: booking.lapangan.nama
+          }
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Admin/Kasir reject booking error:', {
+      error: error.message,
+      bookingId: req.params.id,
+      userId: req.user?._id,
+      userRole: req.user?.role
+    });
+
+    res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kesalahan saat menolak booking'
+    });
+  }
+};

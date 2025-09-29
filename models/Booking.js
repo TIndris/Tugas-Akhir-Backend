@@ -102,20 +102,29 @@ const bookingSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  
-  // ❌ REMOVE: SMS tracking fields (karena tidak digunakan lagi)
-  // paymentReminderSent: {
-  //   type: Boolean,
-  //   default: false
-  // },
-  // preparationReminderSent: {
-  //   type: Boolean,
-  //   default: false
-  // },
-  // confirmationSent: {
-  //   type: Boolean,
-  //   default: false
-  // },
+
+  // ✅ NEW: Admin/Kasir approval fields
+  approved_by_admin: {
+    type: Boolean,
+    default: false
+  },
+  rejected_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  rejected_at: {
+    type: Date
+  },
+  rejection_reason: {
+    type: String
+  },
+  approved_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'  
+  },
+  approved_at: {
+    type: Date
+  }
   
 }, {
   timestamps: true,

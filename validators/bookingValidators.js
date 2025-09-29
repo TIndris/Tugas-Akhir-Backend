@@ -69,7 +69,8 @@ export const BOOKING_STATUSES = [
   'cancelled',
   'completed',
   'pending_payment',
-  'dp_confirmed'
+  'dp_confirmed',
+  'rejected'
 ];
 
 export const validateBookingStatus = (status) => {

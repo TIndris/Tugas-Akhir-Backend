@@ -12,7 +12,9 @@ import {
   checkAvailability,
   getAvailability,
   getBookingStatus,
-  getBookingStatusSummary
+  getBookingStatusSummary,
+  approveBookingByAdmin,
+  rejectBookingByAdmin
 } from '../controllers/bookingController.js';
 import { authenticateToken, requireCashierOrAdmin } from '../middleware/auth.js';
 
@@ -24,6 +26,10 @@ router.get('/availability', getAvailability);
 
 // PROTECTED ROUTES - Authentication required
 router.use(authenticateToken);
+
+// ADMIN/KASIR SPECIFIC ROUTES untuk approve/reject booking
+router.patch('/:id/approve', requireCashierOrAdmin, approveBookingByAdmin);
+router.patch('/:id/reject', requireCashierOrAdmin, rejectBookingByAdmin);
 
 // ADMIN/CASHIER SPECIFIC ROUTES (before general routes)
 router.get('/kasir/all', requireCashierOrAdmin, getAllBookingsForCashier);
