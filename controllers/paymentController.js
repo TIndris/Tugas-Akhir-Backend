@@ -273,12 +273,20 @@ export const createPayment = async (req, res) => {
 
     console.log('Payment created successfully:', payment._id);
 
+    // ✅ NEW: Update booking payment_status setelah payment dibuat
+    await Booking.findByIdAndUpdate(booking_id, {
+      payment_status: 'pending', // Update dari 'no_payment' ke 'pending'
+      updated_at: new Date()
+    });
+
+    console.log('Booking payment_status updated to pending');
+
     // Clear cache
     try {
       if (client && client.isOpen) {
         await client.del('payments:pending');
         await client.del(`payments:user:${req.user._id}`);
-        await client.del(`bookings:${req.user._id}`);
+        await client.del(`bookings:${req.user._id}`); // ✅ Clear booking cache
       }
     } catch (redisError) {
       console.warn('Redis cache clear error:', redisError);
