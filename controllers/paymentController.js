@@ -304,11 +304,32 @@ export const createPayment = async (req, res) => {
     // Get bank info for response
     let bankDetails = null;
     try {
-      if (PaymentService && PaymentService.getBankDetails) {
-        bankDetails = await PaymentService.getBankDetails();
+      // ✅ FIXED: Get from database instead of service
+      const { default: BankAccount } = await import('../models/BankAccount.js');
+      
+      const primaryBank = await BankAccount.findOne({ 
+        is_primary: true, 
+        is_active: true 
+      });
+
+      if (primaryBank) {
+        bankDetails = {
+          bank_name: primaryBank.bank_name,
+          account_number: primaryBank.account_number,
+          account_name: primaryBank.account_name,
+          account_type: primaryBank.account_type,
+          description: primaryBank.description
+        };
       }
     } catch (bankError) {
       console.warn('Bank details unavailable:', bankError.message);
+      // Fallback to default if needed
+      bankDetails = {
+        bank_name: "Hubungi Admin",
+        account_number: "-",
+        account_name: "Informasi bank tidak tersedia",
+        description: "Silakan hubungi admin untuk informasi rekening"
+      };
     }
 
     // Response
@@ -647,19 +668,55 @@ export const getPaymentById = async (req, res) => {
   }
 };
 
+// ✅ FIXED: getBankInfo - Ambil dari database BankAccount
 export const getBankInfo = async (req, res) => {
   try {
-    // Simple bank info - adjust based on your needs
+    // Import BankAccount model
+    const { default: BankAccount } = await import('../models/BankAccount.js');
+    
+    // Get primary bank account (if exists) or first active account
+    let primaryBank = await BankAccount.findOne({ 
+      is_primary: true, 
+      is_active: true 
+    }).populate('created_by', 'name email');
+
+    // If no primary bank, get first active bank
+    if (!primaryBank) {
+      primaryBank = await BankAccount.findOne({ 
+        is_active: true 
+      }).populate('created_by', 'name email');
+    }
+
+    // If still no bank account found
+    if (!primaryBank) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Belum ada rekening bank yang tersedia. Silakan hubungi admin.',
+        error_code: 'NO_BANK_ACCOUNT'
+      });
+    }
+
+    // Get all active bank accounts (optional - for multiple payment options)
+    const allActiveBanks = await BankAccount.find({ 
+      is_active: true 
+    }).populate('created_by', 'name email').sort({ is_primary: -1 });
+
+    // Prepare response data
     const bankInfo = {
-      bank_name: 'Bank BCA',
-      account_number: '1234567890',
-      account_name: 'DSC Sports Center',
+      // Primary bank details
+      bank_name: primaryBank.bank_name,
+      account_number: primaryBank.account_number,
+      account_name: primaryBank.account_name,
+      account_type: primaryBank.account_type,
+      description: primaryBank.description,
+      
+      // Payment options
       payment_options: [
         {
           type: 'dp_payment',
           name: 'Pembayaran DP',
           amount: 50000,
-          description: 'DP tetap Rp 50.000'
+          description: 'DP tetap Rp 50.000 - Sisanya dibayar saat datang'
         },
         {
           type: 'full_payment',
@@ -667,20 +724,45 @@ export const getBankInfo = async (req, res) => {
           amount: 'Sesuai total booking',
           description: 'Bayar langsung sesuai total harga booking'
         }
+      ],
+
+      // ✅ NEW: Multiple bank options (if available)
+      available_banks: allActiveBanks.map(bank => ({
+        id: bank._id,
+        bank_name: bank.bank_name,
+        account_number: bank.account_number,
+        account_name: bank.account_name,
+        account_type: bank.account_type,
+        is_primary: bank.is_primary,
+        description: bank.description
+      })),
+
+      // Additional info
+      notes: [
+        'Transfer sesuai jumlah yang dipilih',
+        'Kirim bukti transfer setelah pembayaran',
+        'Verifikasi akan dilakukan dalam 1x24 jam',
+        'Hubungi admin jika ada kendala'
       ]
     };
     
     res.status(200).json({
       status: 'success',
-      message: 'Informasi pembayaran',
+      message: 'Informasi pembayaran berhasil diambil',
       data: bankInfo
     });
 
   } catch (error) {
-    logger.error('Get bank info error:', error);
+    logger.error('Get bank info error:', {
+      error: error.message,
+      stack: error.stack,
+      user: req.user?._id
+    });
+    
     res.status(500).json({
       status: 'error',
-      message: 'Terjadi kesalahan saat mengambil informasi bank'
+      message: 'Terjadi kesalahan saat mengambil informasi bank',
+      error_code: 'BANK_INFO_ERROR'
     });
   }
 };
