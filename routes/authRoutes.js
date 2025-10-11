@@ -87,7 +87,7 @@ router.get('/google/callback',
       const params = new URLSearchParams({
         login: 'success',
         provider: 'google',
-        user: JSON.stringify(userInfo),
+        token: token,
         timestamp: Date.now()
       });
       
@@ -171,6 +171,11 @@ router.get('/test-auth', authenticateToken, (req, res) => {
     },
     tokenSource: req.headers.authorization ? 'header' : 'cookie',
     timestamp: new Date().toISOString()
+
+
+
+
+    
   });
 });
 
