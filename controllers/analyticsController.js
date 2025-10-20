@@ -33,11 +33,13 @@ export const getRevenueReport = async (req, res) => {
 // Popular Fields Analytics
 export const getPopularFieldsReport = async (req, res) => {
   try {
-    const report = await AnalyticsService.getPopularFieldsReport();
+    const { period = 'monthly' } = req.query; // ✅ ADD: period parameter
+    
+    const report = await AnalyticsService.getPopularFieldsReport(period);
     
     res.status(200).json({
       status: 'success',
-      message: 'Laporan lapangan populer berhasil dibuat',
+      message: `Laporan lapangan populer ${period} berhasil dibuat`,
       data: report
     });
 
@@ -53,11 +55,13 @@ export const getPopularFieldsReport = async (req, res) => {
 // Peak Hours Analytics  
 export const getPeakHoursReport = async (req, res) => {
   try {
-    const report = await AnalyticsService.getPeakHoursReport();
+    const { period = 'monthly' } = req.query; // ✅ ADD: period parameter
+    
+    const report = await AnalyticsService.getPeakHoursReport(period);
     
     res.status(200).json({
       status: 'success',
-      message: 'Laporan jam sibuk berhasil dibuat', 
+      message: `Laporan jam sibuk ${period} berhasil dibuat`, 
       data: report
     });
 

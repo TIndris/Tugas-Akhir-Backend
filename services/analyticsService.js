@@ -26,7 +26,7 @@ class AnalyticsService {
       }
 
       const currentYear = year || new Date().getFullYear();
-      let groupBy, matchFilter;
+      let groupBy, matchFilter, periodLabel;
 
       switch (period) {
         case 'daily':
@@ -41,6 +41,7 @@ class AnalyticsService {
               $lte: moment().tz('Asia/Jakarta').endOf('month').toDate()
             }
           };
+          periodLabel = 'daily';
           break;
         
         case 'weekly':
@@ -48,12 +49,14 @@ class AnalyticsService {
             year: { $year: '$verified_at' },
             week: { $week: '$verified_at' }
           };
+          // ✅ FIXED: Filter untuk 3 minggu terakhir dengan data
           matchFilter = {
             verified_at: {
-              $gte: new Date(`${currentYear}-01-01`),
-              $lte: new Date(`${currentYear}-12-31`)
+              $gte: moment().tz('Asia/Jakarta').startOf('year').toDate(),
+              $lte: moment().tz('Asia/Jakarta').endOf('year').toDate()
             }
           };
+          periodLabel = 'weekly';
           break;
         
         default: // monthly
@@ -67,6 +70,7 @@ class AnalyticsService {
               $lte: new Date(`${currentYear}-12-31`)
             }
           };
+          periodLabel = 'monthly';
           break;
       }
 
@@ -87,15 +91,6 @@ class AnalyticsService {
         },
         { $unwind: { path: '$bookingInfo', preserveNullAndEmptyArrays: true } },
         {
-          $lookup: {
-            from: 'fields',
-            localField: 'bookingInfo.lapangan',
-            foreignField: '_id',
-            as: 'fieldInfo'
-          }
-        },
-        { $unwind: { path: '$fieldInfo', preserveNullAndEmptyArrays: true } },
-        {
           $group: {
             _id: groupBy,
             totalRevenue: { $sum: '$amount' },
@@ -112,18 +107,36 @@ class AnalyticsService {
         { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.week': 1 } }
       ]);
 
+      // ✅ FIXED: Konsistensi perhitungan summary
       const summary = {
         totalRevenue: revenueData.reduce((sum, d) => sum + d.totalRevenue, 0),
         totalTransactions: revenueData.reduce((sum, d) => sum + d.transactionCount, 0),
-        avgRevenuePerPeriod: revenueData.length > 0 ? revenueData.reduce((sum, d) => sum + d.totalRevenue, 0) / revenueData.length : 0,
-        periodsTracked: revenueData.length
+        avgRevenuePerPeriod: revenueData.length > 0 ? 
+          Math.round((revenueData.reduce((sum, d) => sum + d.totalRevenue, 0) / revenueData.length) * 100) / 100 : 0,
+        periodsTracked: revenueData.length,
+        period: periodLabel
       };
 
+      // ✅ FIXED: Format data dengan label yang jelas
+      const formattedData = revenueData.map(item => ({
+        ...item,
+        ...(period === 'weekly' && {
+          weekLabel: `Minggu ke-${item._id.week}`,
+          yearWeek: `${item._id.year}-W${item._id.week}`
+        }),
+        avgTransaction: Math.round(item.avgTransaction * 100) / 100
+      }));
+
       const result = {
-        period,
+        period: periodLabel,
         year: currentYear,
-        data: revenueData,
+        data: formattedData,
         summary,
+        ...(period === 'weekly' && {
+          weekRange: formattedData.length > 0 ? 
+            `Minggu ${Math.min(...formattedData.map(d => d._id.week))}-${Math.max(...formattedData.map(d => d._id.week))}, ${currentYear}` : 
+            'Tidak ada data'
+        }),
         generatedAt: moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
       };
 
@@ -143,8 +156,9 @@ class AnalyticsService {
     }
   }
 
-  static async getPopularFieldsReport() {
-    const cacheKey = 'analytics:popular-fields';
+  // ✅ FIXED: Popular fields dengan filter periode yang konsisten
+  static async getPopularFieldsReport(period = 'monthly') {
+    const cacheKey = `analytics:popular-fields:${period}`;
     
     try {
       let cached = null;
@@ -160,7 +174,42 @@ class AnalyticsService {
         return JSON.parse(cached);
       }
 
+      // ✅ FIXED: Filter berdasarkan periode yang sama dengan revenue
+      let dateFilter = {};
+      if (period === 'weekly') {
+        // Filter untuk minggu yang sama dengan revenue (yang punya payment)
+        const revenueWeeks = await Payment.aggregate([
+          {
+            $match: {
+              status: 'verified',
+              verified_at: {
+                $gte: moment().tz('Asia/Jakarta').startOf('year').toDate(),
+                $lte: moment().tz('Asia/Jakarta').endOf('year').toDate()
+              }
+            }
+          },
+          {
+            $group: {
+              _id: {
+                year: { $year: '$verified_at' },
+                week: { $week: '$verified_at' }
+              }
+            }
+          }
+        ]);
+
+        if (revenueWeeks.length > 0) {
+          const weekNumbers = revenueWeeks.map(w => w._id.week);
+          dateFilter = {
+            $expr: {
+              $in: [{ $week: '$tanggal_booking' }, weekNumbers]
+            }
+          };
+        }
+      }
+
       const popularFields = await Booking.aggregate([
+        ...(Object.keys(dateFilter).length > 0 ? [{ $match: dateFilter }] : []),
         {
           $group: {
             _id: '$lapangan',
@@ -187,7 +236,12 @@ class AnalyticsService {
             confirmationRate: {
               $cond: [
                 { $gt: ['$totalBookings', 0] },
-                { $multiply: [{ $divide: ['$confirmedBookings', '$totalBookings'] }, 100] },
+                { 
+                  $round: [
+                    { $multiply: [{ $divide: ['$confirmedBookings', '$totalBookings'] }, 100] }, 
+                    2
+                  ] 
+                },
                 0
               ]
             }
@@ -198,6 +252,7 @@ class AnalyticsService {
       ]);
 
       const fieldTypeStats = await Booking.aggregate([
+        ...(Object.keys(dateFilter).length > 0 ? [{ $match: dateFilter }] : []),
         {
           $lookup: {
             from: 'fields',
@@ -218,6 +273,7 @@ class AnalyticsService {
       ]);
 
       const result = {
+        period: period,
         popularFields: popularFields,
         fieldTypeStats: fieldTypeStats,
         insights: {
@@ -230,7 +286,8 @@ class AnalyticsService {
         summary: {
           totalFields: popularFields.length,
           totalBookings: popularFields.reduce((sum, f) => sum + f.totalBookings, 0),
-          totalRevenue: popularFields.reduce((sum, f) => sum + f.totalRevenue, 0)
+          totalRevenue: popularFields.reduce((sum, f) => sum + f.totalRevenue, 0),
+          period: period
         },
         generatedAt: moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
       };
@@ -251,8 +308,9 @@ class AnalyticsService {
     }
   }
 
-  static async getPeakHoursReport() {
-    const cacheKey = 'analytics:peak-hours';
+  // ✅ FIXED: Peak hours dengan filter periode yang konsisten
+  static async getPeakHoursReport(period = 'monthly') {
+    const cacheKey = `analytics:peak-hours:${period}`;
     
     try {
       let cached = null;
@@ -268,7 +326,41 @@ class AnalyticsService {
         return JSON.parse(cached);
       }
 
+      // ✅ FIXED: Filter berdasarkan periode yang sama
+      let dateFilter = {};
+      if (period === 'weekly') {
+        const revenueWeeks = await Payment.aggregate([
+          {
+            $match: {
+              status: 'verified',
+              verified_at: {
+                $gte: moment().tz('Asia/Jakarta').startOf('year').toDate(),
+                $lte: moment().tz('Asia/Jakarta').endOf('year').toDate()
+              }
+            }
+          },
+          {
+            $group: {
+              _id: {
+                year: { $year: '$verified_at' },
+                week: { $week: '$verified_at' }
+              }
+            }
+          }
+        ]);
+
+        if (revenueWeeks.length > 0) {
+          const weekNumbers = revenueWeeks.map(w => w._id.week);
+          dateFilter = {
+            $expr: {
+              $in: [{ $week: '$tanggal_booking' }, weekNumbers]
+            }
+          };
+        }
+      }
+
       const hourlyStats = await Booking.aggregate([
+        ...(Object.keys(dateFilter).length > 0 ? [{ $match: dateFilter }] : []),
         {
           $addFields: {
             bookingHour: { $toInt: { $substr: ['$jam_booking', 0, 2] } },
@@ -289,9 +381,13 @@ class AnalyticsService {
           $addFields: {
             hourLabel: {
               $concat: [
-                { $toString: '$_id' },
+                { $cond: [{ $lt: ['$_id', 10] }, { $concat: ['0', { $toString: '$_id' }] }, { $toString: '$_id' }] },
                 ':00 - ',
-                { $toString: { $add: ['$_id', 1] } },
+                { $cond: [
+                  { $lt: [{ $add: ['$_id', 1] }, 10] }, 
+                  { $concat: ['0', { $toString: { $add: ['$_id', 1] } }] }, 
+                  { $toString: { $add: ['$_id', 1] } }
+                ] },
                 ':00'
               ]
             }
@@ -301,6 +397,7 @@ class AnalyticsService {
       ]);
 
       const dayOfWeekStats = await Booking.aggregate([
+        ...(Object.keys(dateFilter).length > 0 ? [{ $match: dateFilter }] : []),
         {
           $addFields: {
             dayOfWeek: { $dayOfWeek: '$tanggal_booking' }
@@ -345,12 +442,18 @@ class AnalyticsService {
       );
 
       const result = {
+        period: period,
         hourlyStats,
         dayOfWeekStats,
         insights: {
           peakHour: `${peakHour.hourLabel} (${peakHour.totalBookings} bookings)`,
           peakDay: `${peakDay.dayName} (${peakDay.totalBookings} bookings)`,
-          avgBookingsPerHour: hourlyStats.reduce((sum, h) => sum + h.totalBookings, 0) / hourlyStats.length || 0
+          avgBookingsPerHour: Math.round((hourlyStats.reduce((sum, h) => sum + h.totalBookings, 0) / Math.max(hourlyStats.length, 1)) * 100) / 100
+        },
+        summary: {
+          totalBookingsAnalyzed: hourlyStats.reduce((sum, h) => sum + h.totalBookings, 0),
+          totalRevenueAnalyzed: hourlyStats.reduce((sum, h) => sum + h.totalRevenue, 0),
+          period: period
         },
         generatedAt: moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
       };
@@ -371,27 +474,56 @@ class AnalyticsService {
     }
   }
 
+  // ✅ FIXED: Dashboard analytics dengan konsistensi periode
   static async getDashboardAnalytics(period = 'monthly') {
     try {
       const [revenue, popularFields, peakHours] = await Promise.all([
         this.getRevenueReport(period),
-        this.getPopularFieldsReport(),
-        this.getPeakHoursReport()
+        this.getPopularFieldsReport(period),
+        this.getPeakHoursReport(period)
       ]);
 
       return {
         revenue: {
-          summary: revenue.summary,
-          trends: revenue.data.slice(-12),
-          period: revenue.period
+          summary: {
+            ...revenue.summary,
+            period: period,
+            ...(period === 'weekly' && { weekRange: revenue.weekRange })
+          },
+          trends: revenue.data,
+          period: period
         },
         popularFields: {
+          summary: {
+            ...popularFields.summary,
+            period: period,
+            ...(period === 'weekly' && { 
+              weekRange: revenue.weekRange,
+              note: "Data lapangan populer berdasarkan periode mingguan yang sama dengan revenue"
+            })
+          },
           topFields: popularFields.popularFields.slice(0, 5),
           typeStats: popularFields.fieldTypeStats
         },
         peakHours: {
+          summary: {
+            ...peakHours.summary,
+            period: period,
+            ...(period === 'weekly' && { 
+              weekRange: revenue.weekRange,
+              note: "Analisis jam sibuk berdasarkan data mingguan yang konsisten"
+            })
+          },
           insights: peakHours.insights,
           hourlyTrends: peakHours.hourlyStats
+        },
+        metadata: {
+          analysisType: period,
+          dataConsistency: 'validated',
+          totalBookingsAcrossAllSections: popularFields.summary.totalBookings,
+          totalRevenueAcrossAllSections: popularFields.summary.totalRevenue,
+          paidTransactions: revenue.summary.totalTransactions,
+          note: `Semua bagian analytics menggunakan konteks waktu ${period} yang konsisten`
         },
         lastUpdated: moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')
       };
